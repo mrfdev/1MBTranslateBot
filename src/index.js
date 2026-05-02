@@ -54,6 +54,31 @@ function hasMeaningfulTranslation(original, translations) {
   return translations.some((translated) => original.trim().toLowerCase() !== translated.trim().toLowerCase());
 }
 
+function isRiskFlagged(original, translations = []) {
+  return config.enableRiskFlag
+    ? shouldFlagText({
+        original,
+        translated: translations.join("\n"),
+        extraTerms: config.extraFlaggedTerms
+      })
+    : false;
+}
+
+function buildEnglishRiskResult(original) {
+  if (!isRiskFlagged(original)) {
+    return null;
+  }
+
+  return {
+    original,
+    translations: [],
+    language: "en",
+    languageLabel: "English",
+    flagged: true,
+    note: "flagged for staff review"
+  };
+}
+
 function shouldHandleMessage(message) {
   if (!message.guildId || message.guildId !== config.guildId) {
     return false;
@@ -76,6 +101,12 @@ function shouldHandleMessage(message) {
 
 async function translateOne(original) {
   if (looksProbablyEnglish(original)) {
+    const englishRiskResult = buildEnglishRiskResult(original);
+    if (englishRiskResult) {
+      console.log(`[translate-bot] Flagging likely English text: "${truncate(original, 80)}"`);
+      return englishRiskResult;
+    }
+
     console.log(`[translate-bot] Skipping likely English text: "${truncate(original, 80)}"`);
     return null;
   }
@@ -85,6 +116,12 @@ async function translateOne(original) {
   const confidence = detected.confidence;
 
   if (detectedLanguage === config.targetLanguage && confidence >= config.minDetectionConfidence) {
+    const englishRiskResult = buildEnglishRiskResult(original);
+    if (englishRiskResult) {
+      console.log(`[translate-bot] Flagging detected English text: "${truncate(original, 80)}"`);
+      return englishRiskResult;
+    }
+
     return null;
   }
 
@@ -99,13 +136,7 @@ async function translateOne(original) {
     translations,
     language: detectedLanguage,
     languageLabel: languageName(detectedLanguage),
-    flagged: config.enableRiskFlag
-      ? shouldFlagText({
-          original,
-          translated: translations.join("\n"),
-          extraTerms: config.extraFlaggedTerms
-        })
-      : false
+    flagged: isRiskFlagged(original, translations)
   };
 }
 
@@ -116,6 +147,11 @@ function formatTranslation(result) {
     .slice(0, config.maxTranslationsPerMessage)
     .map((item) => `\`${escapeBackticks(truncate(item, 280))}\``)
     .join(" / ");
+
+  if (!translated) {
+    const note = result.note ? ` - ${result.note}` : "";
+    return `${flag}(${result.languageLabel}) \`${original}\`${note}`;
+  }
 
   return `${flag}(${result.languageLabel}) \`${original}\` == ${translated}`;
 }

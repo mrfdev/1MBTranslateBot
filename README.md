@@ -157,6 +157,6 @@ ENABLE_RISK_FLAG=false
 
 ## Notes
 
-- English messages are skipped when language detection is confident enough.
+- English messages are skipped when language detection is confident enough, unless risk flagging catches profanity or staff-attention terms.
 - Very short messages such as `cmok` can be hard for any free language detector. The bot still tries, but expect occasional misses.
 - The bot asks LibreTranslate for alternatives when supported. Natural alternatives like `kiss` / `mwah` are still only a machine-translation hint.

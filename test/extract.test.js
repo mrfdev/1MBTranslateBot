@@ -60,3 +60,14 @@ test("flags configured extra terms", () => {
     true
   );
 });
+
+test("flags built-in English profanity before translation", () => {
+  assert.equal(
+    shouldFlagText({
+      original: "this server is shit all in english with fucking profanity",
+      translated: "",
+      extraTerms: []
+    }),
+    true
+  );
+});
