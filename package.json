@@ -6,6 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
+    "libretranslate": "scripts/start-libretranslate.sh",
     "test": "node --test"
   },
   "engines": {

@@ -83,11 +83,13 @@ LibreTranslate is free and open source. Run it in a second `tmux` session:
 
 ```bash
 tmux new -s libretranslate
-python3 -m pip install --user libretranslate
-libretranslate --host 127.0.0.1 --port 5000
+cd /Users/floris/Projects/Codex/1MBTranslateBot
+npm run libretranslate
 ```
 
 Detach from tmux with `Ctrl-b`, then `d`.
+
+On macOS/Homebrew Python, installing with `python3 -m pip install --user libretranslate` can fail with `externally-managed-environment`. The `npm run libretranslate` command avoids that by creating a local `.venv-libretranslate/` virtual environment and installing LibreTranslate there.
 
 The bot defaults to:
 
