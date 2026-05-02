@@ -1,6 +1,7 @@
 const { Client, Events, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const { loadConfig } = require("./config");
 const { extractSignTexts, extractTranslatableTexts } = require("./extract");
+const { formatTranslation: formatTranslationResult } = require("./format");
 const { looksProbablyEnglish } = require("./language");
 const { shouldFlagText } = require("./safety");
 const { LibreTranslateClient, languageName } = require("./translator");
@@ -40,10 +41,6 @@ function truncate(value, maxLength) {
   }
 
   return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
-}
-
-function escapeBackticks(value) {
-  return value.replace(/`/g, "'");
 }
 
 function hasMeaningfulTranslation(original, translations) {
@@ -145,23 +142,10 @@ async function translateOne(original) {
 }
 
 function formatTranslation(result) {
-  const flag = result.flagged ? ":triangular_flag_on_post: " : "";
-  const original = escapeBackticks(truncate(result.original, config.maxOriginalLength));
-  const formattedOriginal = original.includes("\n")
-    ? `\n\`\`\`text\n${original}\n\`\`\``
-    : ` \`${original}\``;
-  const translated = result.translations
-    .slice(0, config.maxTranslationsPerMessage)
-    .map((item) => `\`${escapeBackticks(truncate(item, 280))}\``)
-    .join(" / ");
-
-  if (!translated) {
-    const note = result.note ? `\n${result.note}` : "";
-    return `${flag}(${result.languageLabel})${formattedOriginal}${note}`;
-  }
-
-  const separator = original.includes("\n") ? "\n== " : " == ";
-  return `${flag}(${result.languageLabel})${formattedOriginal}${separator}${translated}`;
+  return formatTranslationResult(result, {
+    maxOriginalLength: config.maxOriginalLength,
+    maxTranslationsPerMessage: config.maxTranslationsPerMessage
+  });
 }
 
 async function handleMessage(message) {
