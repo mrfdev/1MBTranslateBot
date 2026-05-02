@@ -104,7 +104,10 @@ Optional: LibreTranslate can provide alternative translations:
 
 ```env
 TRANSLATION_ALTERNATIVES=2
+MAX_TRANSLATIONS_PER_MESSAGE=1
 ```
+
+`TRANSLATION_ALTERNATIVES` asks LibreTranslate for extra options. `MAX_TRANSLATIONS_PER_MESSAGE` controls how many the Discord bot prints. The default is `1` to keep moderation logs readable.
 
 ## 4. Run it
 

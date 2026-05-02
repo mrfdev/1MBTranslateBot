@@ -46,6 +46,7 @@ function loadConfig() {
     libreTranslateApiKey: process.env.LIBRETRANSLATE_API_KEY || "",
     targetLanguage: process.env.TARGET_LANG || "en",
     translationAlternatives: toNumber(process.env.TRANSLATION_ALTERNATIVES, 2),
+    maxTranslationsPerMessage: Math.max(1, toNumber(process.env.MAX_TRANSLATIONS_PER_MESSAGE, 1)),
     minDetectionConfidence: toNumber(process.env.MIN_DETECTION_CONFIDENCE, 0.2),
     translationTimeoutMs: toNumber(process.env.TRANSLATION_TIMEOUT_MS, 12000),
     translationDelayMs: toNumber(process.env.TRANSLATION_DELAY_MS, 800),

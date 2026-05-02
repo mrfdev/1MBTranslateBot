@@ -113,6 +113,7 @@ function formatTranslation(result) {
   const flag = result.flagged ? ":triangular_flag_on_post: " : "";
   const original = escapeBackticks(truncate(result.original, config.maxOriginalLength));
   const translated = result.translations
+    .slice(0, config.maxTranslationsPerMessage)
     .map((item) => `\`${escapeBackticks(truncate(item, 280))}\``)
     .join(" / ");
 

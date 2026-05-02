@@ -28,6 +28,17 @@ test("deduplicates inline and raw command copies", () => {
   assert.deepEqual(extractTranslatableTextsFromParts(parts), ["postaw pochodnie"]);
 });
 
+test("deduplicates command copies with leftover code fences", () => {
+  const parts = [
+    "```/cmi msg mrflores je peux parler francais comment ca va ?```",
+    "/cmi msg mrflores je peux parler francais comment ca va ?```"
+  ];
+
+  assert.deepEqual(extractTranslatableTextsFromParts(parts), [
+    "je peux parler francais comment ca va ?"
+  ]);
+});
+
 test("does not parse fenced code again from raw markdown fallback", () => {
   const parts = ["```/cmi msg buildingkingdoms blah blah blah this is english```"];
 

@@ -107,11 +107,19 @@ function extractTextFromCommand(line) {
 
 function cleanExtractedText(value) {
   const cleaned = normalizeText(value)
-    .replace(/^`+/, "")
-    .replace(/`+$/, "")
+    .replace(/^[`'"]+/, "")
+    .replace(/[`'"]+$/, "")
     .trim();
 
   return cleaned || null;
+}
+
+function textKey(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/^[`'"]+/, "")
+    .replace(/[`'"]+$/, "")
+    .replace(/\s+/g, " ");
 }
 
 function extractTranslatableTextsFromParts(parts) {
@@ -128,11 +136,12 @@ function extractTranslatableTextsFromParts(parts) {
     for (const candidate of candidates) {
       for (const line of candidate.split("\n")) {
         const text = extractTextFromCommand(line);
-        if (!text || seen.has(text.toLowerCase())) {
+        const key = textKey(text);
+        if (!text || !key || seen.has(key)) {
           continue;
         }
 
-        seen.add(text.toLowerCase());
+        seen.add(key);
         results.push(text);
       }
     }
