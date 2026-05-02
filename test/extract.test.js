@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   extractTextFromCommand,
+  extractSignTextsFromParts,
   extractTranslatableTextsFromParts
 } = require("../src/extract");
 const { looksProbablyEnglish } = require("../src/language");
@@ -50,6 +51,22 @@ test("recognizes obvious English without asking the translation API", () => {
   assert.equal(looksProbablyEnglish("tak sie czuje lowkey"), false);
 });
 
+test("extracts sign text from sign spy embeds", () => {
+  const parts = [
+    "Placed by `FumbleHead` : `/tppos -34988 65 -35024 legacy`\n```\nFumble's\nShitter\n\n## occupied ##\n```"
+  ];
+
+  assert.deepEqual(extractSignTextsFromParts(parts), ["Fumble's\nShitter\n\n## occupied ##"]);
+});
+
+test("ignores sign spy metadata outside fenced sign text", () => {
+  const parts = [
+    "Placed by `Laykam` : `/tppos 8724 82 -11412 wild`\n```\nTotem fish \nMyths: 7/11\nor\nPlats: 9/55\n```"
+  ];
+
+  assert.deepEqual(extractSignTextsFromParts(parts), ["Totem fish\nMyths: 7/11\nor\nPlats: 9/55"]);
+});
+
 test("flags configured extra terms", () => {
   assert.equal(
     shouldFlagText({
@@ -65,6 +82,17 @@ test("flags built-in English profanity before translation", () => {
   assert.equal(
     shouldFlagText({
       original: "this server is shit all in english with fucking profanity",
+      translated: "",
+      extraTerms: []
+    }),
+    true
+  );
+});
+
+test("flags sign profanity before translation", () => {
+  assert.equal(
+    shouldFlagText({
+      original: "Fumble's\nShitter\n\n## occupied ##",
       translated: "",
       extraTerms: []
     }),

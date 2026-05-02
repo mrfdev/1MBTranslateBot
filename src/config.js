@@ -40,6 +40,7 @@ function loadConfig() {
     discordToken: required("DISCORD_TOKEN"),
     guildId: process.env.DISCORD_GUILD_ID || "487398800353263616",
     logChannelId: process.env.LOG_CHANNEL_ID || "807177293943275530",
+    signChannelId: process.env.SIGN_CHANNEL_ID || "1396738538229469184",
     sourceBotIds: new Set(splitCsv(process.env.SOURCE_BOT_IDS)),
     translateHumanMessages: toBoolean(process.env.TRANSLATE_HUMAN_MESSAGES, false),
     libreTranslateUrl: (process.env.LIBRETRANSLATE_URL || "http://127.0.0.1:5000").replace(/\/+$/, ""),

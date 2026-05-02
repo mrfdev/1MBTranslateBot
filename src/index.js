@@ -1,6 +1,6 @@
 const { Client, Events, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const { loadConfig } = require("./config");
-const { extractTranslatableTexts } = require("./extract");
+const { extractSignTexts, extractTranslatableTexts } = require("./extract");
 const { looksProbablyEnglish } = require("./language");
 const { shouldFlagText } = require("./safety");
 const { LibreTranslateClient, languageName } = require("./translator");
@@ -79,12 +79,16 @@ function buildEnglishRiskResult(original) {
   };
 }
 
+function watchedChannelIds() {
+  return new Set([config.logChannelId, config.signChannelId].filter(Boolean));
+}
+
 function shouldHandleMessage(message) {
   if (!message.guildId || message.guildId !== config.guildId) {
     return false;
   }
 
-  if (message.channelId !== config.logChannelId) {
+  if (!watchedChannelIds().has(message.channelId)) {
     return false;
   }
 
@@ -143,17 +147,21 @@ async function translateOne(original) {
 function formatTranslation(result) {
   const flag = result.flagged ? ":triangular_flag_on_post: " : "";
   const original = escapeBackticks(truncate(result.original, config.maxOriginalLength));
+  const formattedOriginal = original.includes("\n")
+    ? `\n\`\`\`text\n${original}\n\`\`\``
+    : ` \`${original}\``;
   const translated = result.translations
     .slice(0, config.maxTranslationsPerMessage)
     .map((item) => `\`${escapeBackticks(truncate(item, 280))}\``)
     .join(" / ");
 
   if (!translated) {
-    const note = result.note ? ` - ${result.note}` : "";
-    return `${flag}(${result.languageLabel}) \`${original}\`${note}`;
+    const note = result.note ? `\n${result.note}` : "";
+    return `${flag}(${result.languageLabel})${formattedOriginal}${note}`;
   }
 
-  return `${flag}(${result.languageLabel}) \`${original}\` == ${translated}`;
+  const separator = original.includes("\n") ? "\n== " : " == ";
+  return `${flag}(${result.languageLabel})${formattedOriginal}${separator}${translated}`;
 }
 
 async function handleMessage(message) {
@@ -169,7 +177,9 @@ async function handleMessage(message) {
     );
   }
 
-  const texts = extractTranslatableTexts(message);
+  const texts = message.channelId === config.signChannelId
+    ? extractSignTexts(message)
+    : extractTranslatableTexts(message);
   if (texts.length === 0) {
     return;
   }
@@ -211,7 +221,10 @@ async function handleMessage(message) {
 
 async function logRuntimeAccess(readyClient) {
   console.log(`[translate-bot] Logged in as ${readyClient.user.tag}`);
-  console.log(`[translate-bot] Configured guild ${config.guildId}, channel ${config.logChannelId}`);
+  console.log(
+    `[translate-bot] Configured guild ${config.guildId}, msg channel ${config.logChannelId}, ` +
+      `sign channel ${config.signChannelId}`
+  );
 
   let guild;
   try {
@@ -229,11 +242,17 @@ async function logRuntimeAccess(readyClient) {
     return;
   }
 
+  console.log(`[translate-bot] Connected to guild: ${guild.name} (${guild.id})`);
+  await logChannelAccess(readyClient, "message logs", config.logChannelId);
+  await logChannelAccess(readyClient, "sign logs", config.signChannelId);
+}
+
+async function logChannelAccess(readyClient, label, channelId) {
   let channel;
   try {
-    channel = await readyClient.channels.fetch(config.logChannelId);
+    channel = await readyClient.channels.fetch(channelId);
   } catch (error) {
-    console.error(`[translate-bot] Cannot fetch channel ${config.logChannelId}: ${error.message}`);
+    console.error(`[translate-bot] Cannot fetch ${label} channel ${channelId}: ${error.message}`);
     return;
   }
 
@@ -245,10 +264,9 @@ async function logRuntimeAccess(readyClient) {
     ["EmbedLinks", PermissionsBitField.Flags.EmbedLinks]
   ];
 
-  console.log(`[translate-bot] Connected to guild: ${guild.name} (${guild.id})`);
-  console.log(`[translate-bot] Watching channel: ${channel.name || channel.id} (${channel.id})`);
+  console.log(`[translate-bot] Watching ${label} channel: ${channel.name || channel.id} (${channel.id})`);
   for (const [name, flag] of checks) {
-    console.log(`[translate-bot] Permission ${name}: ${permissions?.has(flag) ? "yes" : "NO"}`);
+    console.log(`[translate-bot] ${label} permission ${name}: ${permissions?.has(flag) ? "yes" : "NO"}`);
   }
 }
 

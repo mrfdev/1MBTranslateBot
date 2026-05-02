@@ -48,16 +48,23 @@ function collectMessageTextParts(message) {
 }
 
 function extractMarkedCode(raw) {
+  const samples = extractFencedCode(raw);
+
+  const fencedPattern = /```(?:\w+)?\n?([\s\S]*?)```/g;
+  const withoutFencedBlocks = raw.replace(fencedPattern, "\n");
+  const inlinePattern = /`([^`\n]+)`/g;
+  for (const match of withoutFencedBlocks.matchAll(inlinePattern)) {
+    samples.push(match[1]);
+  }
+
+  return samples;
+}
+
+function extractFencedCode(raw) {
   const samples = [];
   const fencedPattern = /```(?:\w+)?\n?([\s\S]*?)```/g;
 
   for (const match of raw.matchAll(fencedPattern)) {
-    samples.push(match[1]);
-  }
-
-  const withoutFencedBlocks = raw.replace(fencedPattern, "\n");
-  const inlinePattern = /`([^`\n]+)`/g;
-  for (const match of withoutFencedBlocks.matchAll(inlinePattern)) {
     samples.push(match[1]);
   }
 
@@ -114,12 +121,52 @@ function cleanExtractedText(value) {
   return cleaned || null;
 }
 
+function cleanSignText(value) {
+  const cleaned = stripMinecraftFormatting(String(value || ""))
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .replace(/^[`'"]+/, "")
+    .replace(/[`'"]+$/, "")
+    .trim();
+
+  return cleaned || null;
+}
+
 function textKey(value) {
   return normalizeText(value)
     .toLowerCase()
     .replace(/^[`'"]+/, "")
     .replace(/[`'"]+$/, "")
     .replace(/\s+/g, " ");
+}
+
+function extractSignTextsFromParts(parts) {
+  const seen = new Set();
+  const results = [];
+
+  for (const part of parts) {
+    const raw = String(part || "");
+    if (!raw.trim()) {
+      continue;
+    }
+
+    const fencedBlocks = extractFencedCode(raw);
+    for (const block of fencedBlocks) {
+      const text = cleanSignText(block);
+      const key = textKey(text);
+      if (!text || !key || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      results.push(text);
+    }
+  }
+
+  return results;
 }
 
 function extractTranslatableTextsFromParts(parts) {
@@ -154,9 +201,15 @@ function extractTranslatableTexts(message) {
   return extractTranslatableTextsFromParts(collectMessageTextParts(message));
 }
 
+function extractSignTexts(message) {
+  return extractSignTextsFromParts(collectMessageTextParts(message));
+}
+
 module.exports = {
   collectMessageTextParts,
   extractTextFromCommand,
+  extractSignTexts,
+  extractSignTextsFromParts,
   extractTranslatableTexts,
   extractTranslatableTextsFromParts
 };

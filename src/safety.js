@@ -1,7 +1,7 @@
 const DEFAULT_FLAG_PATTERNS = [
   /\b(?:kys|kill\s+yourself|suicide|rape|rapist)\b/i,
   /\b(?:nazi|hitler|heil\s+hitler)\b/i,
-  /\b(?:fuck|fucking|shit|bitch|cunt|asshole|dickhead)\b/i,
+  /\b(?:fuck|fucking|shit|shitter|bitch|cunt|asshole|dickhead)\b/i,
   /\b(?:kurwa|pierdol\w*|jebac|jeba[cć]|chuj|suka|blyat|блять|сука|хуй)\b/i,
   /\b(?:kanker|tering|kut|lul|hoer)\b/i
 ];

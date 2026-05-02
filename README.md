@@ -1,11 +1,12 @@
 # 1MB Translate Bot
 
-This bot watches one Discord logging channel, extracts Minecraft private-message log lines such as `/cmi msg player text`, detects the language, and replies underneath with an English translation.
+This bot watches Discord Minecraft moderation logs, extracts private-message log lines such as `/cmi msg player text`, and extracts sign text from sign-placement logs. It detects the language and replies underneath with an English translation or a staff-attention flag.
 
 Default target:
 
 - Server: `487398800353263616`
-- Channel: `807177293943275530`
+- Message channel: `807177293943275530`
+- Signs channel: `1396738538229469184`
 
 Example output:
 
@@ -67,9 +68,10 @@ Set at least:
 DISCORD_TOKEN=your-real-token
 DISCORD_GUILD_ID=487398800353263616
 LOG_CHANNEL_ID=807177293943275530
+SIGN_CHANNEL_ID=1396738538229469184
 ```
 
-Leave `SOURCE_BOT_IDS` blank at first. The bot will watch any bot/webhook message in the channel except itself. Once you know the MSG SPY bot's Discord user ID, set:
+Leave `SOURCE_BOT_IDS` blank at first. The bot will watch any bot/webhook message in the configured channels except itself. Once you know the MSG SPY bot's Discord user ID, set:
 
 ```env
 SOURCE_BOT_IDS=the-msg-spy-bot-user-id
