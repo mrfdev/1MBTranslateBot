@@ -117,6 +117,8 @@ Test in the foreground:
 npm start
 ```
 
+On startup, the bot checks Discord access and LibreTranslate access. If LibreTranslate is not running, it prints the exact `tmux` and `npm run libretranslate` commands to start it.
+
 Run it in `tmux`:
 
 ```bash

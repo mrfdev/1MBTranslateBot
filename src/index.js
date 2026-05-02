@@ -216,8 +216,29 @@ async function logRuntimeAccess(readyClient) {
   }
 }
 
+async function logTranslationBackendAccess() {
+  const health = await translator.healthCheck();
+  if (health.ok) {
+    const targetStatus = health.targetAvailable ? "available" : "not listed";
+    console.log(
+      `[translate-bot] LibreTranslate OK at ${config.libreTranslateUrl} ` +
+        `(${health.languageCount} languages, target ${config.targetLanguage}: ${targetStatus})`
+    );
+    return;
+  }
+
+  console.error(`[translate-bot] LibreTranslate is not reachable at ${config.libreTranslateUrl}.`);
+  console.error(`[translate-bot] Reason: ${health.message}`);
+  console.error("[translate-bot] Start it in another terminal/tmux session:");
+  console.error("[translate-bot]   tmux new -s libretranslate");
+  console.error("[translate-bot]   cd /Users/floris/Projects/Codex/1MBTranslateBot");
+  console.error("[translate-bot]   npm run libretranslate");
+  console.error("[translate-bot] Then detach with Ctrl-b, then d, and restart this bot.");
+}
+
 client.once(Events.ClientReady, (readyClient) => {
   void logRuntimeAccess(readyClient);
+  void logTranslationBackendAccess();
   if (config.sourceBotIds.size === 0) {
     console.log("[translate-bot] SOURCE_BOT_IDS is empty; watching all bots/webhooks in that channel.");
   }

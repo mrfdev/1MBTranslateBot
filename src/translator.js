@@ -49,6 +49,22 @@ async function postJson(url, body, timeoutMs) {
   return response.json();
 }
 
+async function getJson(url, timeoutMs) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json"
+    },
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`LibreTranslate HTTP ${response.status}: ${text.slice(0, 200)}`);
+  }
+
+  return response.json();
+}
+
 class LibreTranslateClient {
   constructor(options) {
     this.baseUrl = options.baseUrl;
@@ -68,6 +84,32 @@ class LibreTranslateClient {
       ...body,
       api_key: this.apiKey
     };
+  }
+
+  async healthCheck() {
+    const timeoutMs = Math.min(this.timeoutMs, 5000);
+
+    try {
+      const languages = await getJson(`${this.baseUrl}/languages`, timeoutMs);
+      if (!Array.isArray(languages)) {
+        return {
+          ok: false,
+          message: "LibreTranslate responded, but /languages did not return a language list."
+        };
+      }
+
+      const targetAvailable = languages.some((language) => language.code === this.targetLanguage);
+      return {
+        ok: true,
+        languageCount: languages.length,
+        targetAvailable
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message
+      };
+    }
   }
 
   async detect(text) {
