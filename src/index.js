@@ -1,4 +1,4 @@
-const { Client, Events, GatewayIntentBits } = require("discord.js");
+const { Client, Events, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const { loadConfig } = require("./config");
 const { extractTranslatableTexts } = require("./extract");
 const { shouldFlagText } = require("./safety");
@@ -166,9 +166,51 @@ async function handleMessage(message) {
   }
 }
 
-client.once(Events.ClientReady, (readyClient) => {
+async function logRuntimeAccess(readyClient) {
   console.log(`[translate-bot] Logged in as ${readyClient.user.tag}`);
-  console.log(`[translate-bot] Watching guild ${config.guildId}, channel ${config.logChannelId}`);
+  console.log(`[translate-bot] Configured guild ${config.guildId}, channel ${config.logChannelId}`);
+
+  let guild;
+  try {
+    guild = readyClient.guilds.cache.get(config.guildId) || (await readyClient.guilds.fetch(config.guildId));
+  } catch (error) {
+    console.error(
+      `[translate-bot] Cannot see guild ${config.guildId}. ` +
+        "Invite this bot application to that server, then restart the bot."
+    );
+    console.error(`[translate-bot] Guilds visible to this bot: ${readyClient.guilds.cache.size}`);
+    for (const visibleGuild of readyClient.guilds.cache.values()) {
+      console.error(`[translate-bot] - ${visibleGuild.id} ${visibleGuild.name}`);
+    }
+    console.error(`[translate-bot] Discord error: ${error.message}`);
+    return;
+  }
+
+  let channel;
+  try {
+    channel = await readyClient.channels.fetch(config.logChannelId);
+  } catch (error) {
+    console.error(`[translate-bot] Cannot fetch channel ${config.logChannelId}: ${error.message}`);
+    return;
+  }
+
+  const permissions = channel.permissionsFor(readyClient.user.id);
+  const checks = [
+    ["ViewChannel", PermissionsBitField.Flags.ViewChannel],
+    ["SendMessages", PermissionsBitField.Flags.SendMessages],
+    ["ReadMessageHistory", PermissionsBitField.Flags.ReadMessageHistory],
+    ["EmbedLinks", PermissionsBitField.Flags.EmbedLinks]
+  ];
+
+  console.log(`[translate-bot] Connected to guild: ${guild.name} (${guild.id})`);
+  console.log(`[translate-bot] Watching channel: ${channel.name || channel.id} (${channel.id})`);
+  for (const [name, flag] of checks) {
+    console.log(`[translate-bot] Permission ${name}: ${permissions?.has(flag) ? "yes" : "NO"}`);
+  }
+}
+
+client.once(Events.ClientReady, (readyClient) => {
+  void logRuntimeAccess(readyClient);
   if (config.sourceBotIds.size === 0) {
     console.log("[translate-bot] SOURCE_BOT_IDS is empty; watching all bots/webhooks in that channel.");
   }
