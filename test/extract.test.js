@@ -4,6 +4,7 @@ const {
   extractTextFromCommand,
   extractTranslatableTextsFromParts
 } = require("../src/extract");
+const { looksProbablyEnglish } = require("../src/language");
 const { shouldFlagText } = require("../src/safety");
 
 test("extracts text after cmi msg recipient", () => {
@@ -25,6 +26,17 @@ test("deduplicates inline and raw command copies", () => {
   const parts = ["`/cmi msg hellokic1a postaw pochodnie`\n/cmi msg hellokic1a postaw pochodnie"];
 
   assert.deepEqual(extractTranslatableTextsFromParts(parts), ["postaw pochodnie"]);
+});
+
+test("does not parse fenced code again from raw markdown fallback", () => {
+  const parts = ["```/cmi msg buildingkingdoms blah blah blah this is english```"];
+
+  assert.deepEqual(extractTranslatableTextsFromParts(parts), ["blah blah blah this is english"]);
+});
+
+test("recognizes obvious English without asking the translation API", () => {
+  assert.equal(looksProbablyEnglish("blah blah blah this is english"), true);
+  assert.equal(looksProbablyEnglish("tak sie czuje lowkey"), false);
 });
 
 test("flags configured extra terms", () => {

@@ -1,6 +1,7 @@
 const { Client, Events, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const { loadConfig } = require("./config");
 const { extractTranslatableTexts } = require("./extract");
+const { looksProbablyEnglish } = require("./language");
 const { shouldFlagText } = require("./safety");
 const { LibreTranslateClient, languageName } = require("./translator");
 
@@ -74,6 +75,11 @@ function shouldHandleMessage(message) {
 }
 
 async function translateOne(original) {
+  if (looksProbablyEnglish(original)) {
+    console.log(`[translate-bot] Skipping likely English text: "${truncate(original, 80)}"`);
+    return null;
+  }
+
   const detected = await translator.detect(original);
   const detectedLanguage = detected.language;
   const confidence = detected.confidence;

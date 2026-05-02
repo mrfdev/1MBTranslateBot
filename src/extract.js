@@ -50,17 +50,24 @@ function collectMessageTextParts(message) {
 function extractMarkedCode(raw) {
   const samples = [];
   const fencedPattern = /```(?:\w+)?\n?([\s\S]*?)```/g;
-  const inlinePattern = /`([^`\n]+)`/g;
 
   for (const match of raw.matchAll(fencedPattern)) {
     samples.push(match[1]);
   }
 
-  for (const match of raw.matchAll(inlinePattern)) {
+  const withoutFencedBlocks = raw.replace(fencedPattern, "\n");
+  const inlinePattern = /`([^`\n]+)`/g;
+  for (const match of withoutFencedBlocks.matchAll(inlinePattern)) {
     samples.push(match[1]);
   }
 
   return samples;
+}
+
+function stripMarkedCode(raw) {
+  return raw
+    .replace(/```(?:\w+)?\n?[\s\S]*?```/g, "\n")
+    .replace(/`[^`\n]+`/g, " ");
 }
 
 function removeDiscordMarkdown(value) {
@@ -82,20 +89,29 @@ function extractTextFromCommand(line) {
     /(?:^|\s)\/(?:cmi\s+)?(?:msg|message|tell|w|whisper|m|pm)\s+\S+\s+([\s\S]+)$/i
   );
   if (directMessageMatch) {
-    return normalizeText(directMessageMatch[1]);
+    return cleanExtractedText(directMessageMatch[1]);
   }
 
   const replyMatch = cleaned.match(/(?:^|\s)\/(?:r|reply)\s+([\s\S]+)$/i);
   if (replyMatch) {
-    return normalizeText(replyMatch[1]);
+    return cleanExtractedText(replyMatch[1]);
   }
 
   const meMatch = cleaned.match(/(?:^|\s)\/me\s+([\s\S]+)$/i);
   if (meMatch) {
-    return normalizeText(meMatch[1]);
+    return cleanExtractedText(meMatch[1]);
   }
 
   return null;
+}
+
+function cleanExtractedText(value) {
+  const cleaned = normalizeText(value)
+    .replace(/^`+/, "")
+    .replace(/`+$/, "")
+    .trim();
+
+  return cleaned || null;
 }
 
 function extractTranslatableTextsFromParts(parts) {
@@ -108,7 +124,7 @@ function extractTranslatableTextsFromParts(parts) {
       continue;
     }
 
-    const candidates = [...extractMarkedCode(raw), raw];
+    const candidates = [...extractMarkedCode(raw), stripMarkedCode(raw)];
     for (const candidate of candidates) {
       for (const line of candidate.split("\n")) {
         const text = extractTextFromCommand(line);
