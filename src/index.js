@@ -236,9 +236,23 @@ async function logTranslationBackendAccess() {
   console.error("[translate-bot] Then detach with Ctrl-b, then d, and restart this bot.");
 }
 
+function logRiskFlagConfig() {
+  if (!config.enableRiskFlag) {
+    console.log("[translate-bot] Risk flagging: disabled (ENABLE_RISK_FLAG=false)");
+    return;
+  }
+
+  const customCount = config.extraFlaggedTerms.length;
+  const customText = customCount === 1 ? "1 custom term" : `${customCount} custom terms`;
+  console.log(
+    `[translate-bot] Risk flagging: enabled (built-in patterns + ${customText} from FLAGGED_TERMS)`
+  );
+}
+
 client.once(Events.ClientReady, (readyClient) => {
   void logRuntimeAccess(readyClient);
   void logTranslationBackendAccess();
+  logRiskFlagConfig();
   if (config.sourceBotIds.size === 0) {
     console.log("[translate-bot] SOURCE_BOT_IDS is empty; watching all bots/webhooks in that channel.");
   }
