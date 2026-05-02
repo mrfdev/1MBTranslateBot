@@ -41,6 +41,7 @@ function loadConfig() {
     guildId: process.env.DISCORD_GUILD_ID || "487398800353263616",
     logChannelId: process.env.LOG_CHANNEL_ID || "807177293943275530",
     signChannelId: process.env.SIGN_CHANNEL_ID || "1396738538229469184",
+    bookChannelId: process.env.BOOK_CHANNEL_ID || "1397140960902647879",
     sourceBotIds: new Set(splitCsv(process.env.SOURCE_BOT_IDS)),
     translateHumanMessages: toBoolean(process.env.TRANSLATE_HUMAN_MESSAGES, false),
     libreTranslateUrl: (process.env.LIBRETRANSLATE_URL || "http://127.0.0.1:5000").replace(/\/+$/, ""),
@@ -51,7 +52,8 @@ function loadConfig() {
     minDetectionConfidence: toNumber(process.env.MIN_DETECTION_CONFIDENCE, 0.2),
     translationTimeoutMs: toNumber(process.env.TRANSLATION_TIMEOUT_MS, 12000),
     translationDelayMs: toNumber(process.env.TRANSLATION_DELAY_MS, 800),
-    maxOriginalLength: toNumber(process.env.MAX_ORIGINAL_LENGTH, 240),
+    maxOriginalLength: toNumber(process.env.MAX_ORIGINAL_LENGTH, 600),
+    maxTranslationLength: toNumber(process.env.MAX_TRANSLATION_LENGTH, 600),
     enableRiskFlag: toBoolean(process.env.ENABLE_RISK_FLAG, true),
     extraFlaggedTerms: splitCsv(process.env.FLAGGED_TERMS)
   };

@@ -16,12 +16,13 @@ function codeBlock(value) {
 
 function formatTranslation(result, options = {}) {
   const maxOriginalLength = options.maxOriginalLength || 240;
+  const maxTranslationLength = options.maxTranslationLength || 600;
   const maxTranslationsPerMessage = options.maxTranslationsPerMessage || 1;
   const flag = result.flagged ? ":triangular_flag_on_post: " : "";
   const original = escapeBackticks(truncate(result.original, maxOriginalLength));
   const translations = result.translations
     .slice(0, maxTranslationsPerMessage)
-    .map((item) => escapeBackticks(truncate(item, 280)));
+    .map((item) => escapeBackticks(truncate(item, maxTranslationLength)));
 
   if (translations.length === 0) {
     const formattedOriginal = original.includes("\n") ? `\n${codeBlock(original)}` : ` \`${original}\``;

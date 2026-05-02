@@ -1,6 +1,6 @@
 const { Client, Events, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const { loadConfig } = require("./config");
-const { extractSignTexts, extractTranslatableTexts } = require("./extract");
+const { extractBookTexts, extractSignTexts, extractTranslatableTexts } = require("./extract");
 const { formatTranslation: formatTranslationResult } = require("./format");
 const { looksProbablyEnglish } = require("./language");
 const { shouldFlagText } = require("./safety");
@@ -77,7 +77,7 @@ function buildEnglishRiskResult(original) {
 }
 
 function watchedChannelIds() {
-  return new Set([config.logChannelId, config.signChannelId].filter(Boolean));
+  return new Set([config.logChannelId, config.signChannelId, config.bookChannelId].filter(Boolean));
 }
 
 function shouldHandleMessage(message) {
@@ -144,6 +144,7 @@ async function translateOne(original) {
 function formatTranslation(result) {
   return formatTranslationResult(result, {
     maxOriginalLength: config.maxOriginalLength,
+    maxTranslationLength: config.maxTranslationLength,
     maxTranslationsPerMessage: config.maxTranslationsPerMessage
   });
 }
@@ -161,41 +162,99 @@ async function handleMessage(message) {
     );
   }
 
-  const texts = message.channelId === config.signChannelId
-    ? extractSignTexts(message)
-    : extractTranslatableTexts(message);
+  const texts = extractTextsForMessage(message);
   if (texts.length === 0) {
     return;
   }
 
-  const lines = [];
-  for (const text of texts) {
+  const outputs = [];
+  for (const [index, text] of texts.entries()) {
     try {
       const result = await translateOne(text);
       if (result) {
-        lines.push(formatTranslation(result));
+        const pageLabel = message.channelId === config.bookChannelId ? `Page ${index + 1}\n` : "";
+        outputs.push(`${pageLabel}${formatTranslation(result)}`);
       }
     } catch (error) {
       console.error(`[translate-bot] Failed to translate "${text}":`, error);
     }
   }
 
-  if (lines.length === 0) {
+  if (outputs.length === 0) {
     return;
   }
 
-  const content = lines.join("\n").slice(0, 1900);
+  const chunks = chunkOutputs(outputs);
   try {
-    await message.reply({
-      content,
-      allowedMentions: {
-        repliedUser: false
-      }
-    });
+    await sendOutputChunks(message, chunks);
   } catch (error) {
     console.error("[translate-bot] Reply failed; sending a plain channel message instead:", error);
+    for (const chunk of chunks) {
+      await message.channel.send({
+        content: chunk,
+        allowedMentions: {
+          parse: []
+        }
+      });
+    }
+  }
+}
+
+function extractTextsForMessage(message) {
+  if (message.channelId === config.signChannelId) {
+    return extractSignTexts(message);
+  }
+
+  if (message.channelId === config.bookChannelId) {
+    return extractBookTexts(message);
+  }
+
+  return extractTranslatableTexts(message);
+}
+
+function chunkOutputs(outputs, maxLength = 1900) {
+  const chunks = [];
+  let current = "";
+
+  for (const output of outputs) {
+    const next = current ? `${current}\n\n${output}` : output;
+    if (next.length <= maxLength) {
+      current = next;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+    }
+
+    if (output.length <= maxLength) {
+      current = output;
+      continue;
+    }
+
+    chunks.push(`${output.slice(0, maxLength - 1)}…`);
+    current = "";
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+async function sendOutputChunks(message, chunks) {
+  const [first, ...rest] = chunks;
+  await message.reply({
+    content: first,
+    allowedMentions: {
+      repliedUser: false
+    }
+  });
+
+  for (const chunk of rest) {
     await message.channel.send({
-      content,
+      content: chunk,
       allowedMentions: {
         parse: []
       }
@@ -207,7 +266,7 @@ async function logRuntimeAccess(readyClient) {
   console.log(`[translate-bot] Logged in as ${readyClient.user.tag}`);
   console.log(
     `[translate-bot] Configured guild ${config.guildId}, msg channel ${config.logChannelId}, ` +
-      `sign channel ${config.signChannelId}`
+      `sign channel ${config.signChannelId}, book channel ${config.bookChannelId}`
   );
 
   let guild;
@@ -229,6 +288,7 @@ async function logRuntimeAccess(readyClient) {
   console.log(`[translate-bot] Connected to guild: ${guild.name} (${guild.id})`);
   await logChannelAccess(readyClient, "message logs", config.logChannelId);
   await logChannelAccess(readyClient, "sign logs", config.signChannelId);
+  await logChannelAccess(readyClient, "book logs", config.bookChannelId);
 }
 
 async function logChannelAccess(readyClient, label, channelId) {

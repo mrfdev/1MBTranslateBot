@@ -50,7 +50,7 @@ function collectMessageTextParts(message) {
 function extractMarkedCode(raw) {
   const samples = extractFencedCode(raw);
 
-  const fencedPattern = /```(?:\w+)?\n?([\s\S]*?)```/g;
+  const fencedPattern = /```([\s\S]*?)```/g;
   const withoutFencedBlocks = raw.replace(fencedPattern, "\n");
   const inlinePattern = /`([^`\n]+)`/g;
   for (const match of withoutFencedBlocks.matchAll(inlinePattern)) {
@@ -62,7 +62,7 @@ function extractMarkedCode(raw) {
 
 function extractFencedCode(raw) {
   const samples = [];
-  const fencedPattern = /```(?:\w+)?\n?([\s\S]*?)```/g;
+  const fencedPattern = /```([\s\S]*?)```/g;
 
   for (const match of raw.matchAll(fencedPattern)) {
     samples.push(match[1]);
@@ -73,7 +73,7 @@ function extractFencedCode(raw) {
 
 function stripMarkedCode(raw) {
   return raw
-    .replace(/```(?:\w+)?\n?[\s\S]*?```/g, "\n")
+    .replace(/```[\s\S]*?```/g, "\n")
     .replace(/`[^`\n]+`/g, " ");
 }
 
@@ -144,6 +144,14 @@ function textKey(value) {
 }
 
 function extractSignTextsFromParts(parts) {
+  return extractFencedTextsFromParts(parts);
+}
+
+function extractBookTextsFromParts(parts) {
+  return extractFencedTextsFromParts(parts);
+}
+
+function extractFencedTextsFromParts(parts) {
   const seen = new Set();
   const results = [];
 
@@ -205,8 +213,14 @@ function extractSignTexts(message) {
   return extractSignTextsFromParts(collectMessageTextParts(message));
 }
 
+function extractBookTexts(message) {
+  return extractBookTextsFromParts(collectMessageTextParts(message));
+}
+
 module.exports = {
   collectMessageTextParts,
+  extractBookTexts,
+  extractBookTextsFromParts,
   extractTextFromCommand,
   extractSignTexts,
   extractSignTextsFromParts,

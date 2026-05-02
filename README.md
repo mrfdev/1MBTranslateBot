@@ -1,12 +1,13 @@
 # 1MB Translate Bot
 
-This bot watches Discord Minecraft moderation logs, extracts private-message log lines such as `/cmi msg player text`, and extracts sign text from sign-placement logs. It detects the language and replies underneath with an English translation or a staff-attention flag.
+This bot watches Discord Minecraft moderation logs, extracts private-message log lines such as `/cmi msg player text`, sign text from sign-placement logs, and book pages from book-edit logs. It detects the language and replies underneath with an English translation or a staff-attention flag.
 
 Default target:
 
 - Server: `487398800353263616`
 - Message channel: `807177293943275530`
 - Signs channel: `1396738538229469184`
+- Books channel: `1397140960902647879`
 
 Example output:
 
@@ -69,6 +70,7 @@ DISCORD_TOKEN=your-real-token
 DISCORD_GUILD_ID=487398800353263616
 LOG_CHANNEL_ID=807177293943275530
 SIGN_CHANNEL_ID=1396738538229469184
+BOOK_CHANNEL_ID=1397140960902647879
 ```
 
 Leave `SOURCE_BOT_IDS` blank at first. The bot will watch any bot/webhook message in the configured channels except itself. Once you know the MSG SPY bot's Discord user ID, set:
@@ -107,9 +109,11 @@ Optional: LibreTranslate can provide alternative translations:
 ```env
 TRANSLATION_ALTERNATIVES=2
 MAX_TRANSLATIONS_PER_MESSAGE=1
+MAX_ORIGINAL_LENGTH=600
+MAX_TRANSLATION_LENGTH=600
 ```
 
-`TRANSLATION_ALTERNATIVES` asks LibreTranslate for extra options. `MAX_TRANSLATIONS_PER_MESSAGE` controls how many the Discord bot prints. The default is `1` to keep moderation logs readable.
+`TRANSLATION_ALTERNATIVES` asks LibreTranslate for extra options. `MAX_TRANSLATIONS_PER_MESSAGE` controls how many the Discord bot prints. The default is `1` to keep moderation logs readable. The length limits are intentionally roomy enough for sign and book-page text.
 
 ## 4. Run it
 
