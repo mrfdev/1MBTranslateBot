@@ -43,6 +43,14 @@ https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=68608&
 
 Replace `YOUR_CLIENT_ID` with the application/client ID from the Developer Portal.
 
+For this bot application, the current invite URL is:
+
+```text
+https://discord.com/oauth2/authorize?client_id=1499923232843894794&permissions=137439333440&scope=bot
+```
+
+After inviting it, the bot should appear as a member of the server. If it does not, make sure you selected server `487398800353263616` while logged in with a Discord account that has **Manage Server** permission.
+
 ## 2. Install the bot
 
 From this folder:
