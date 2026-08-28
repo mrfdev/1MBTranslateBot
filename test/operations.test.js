@@ -67,7 +67,10 @@ test("validates owner-local remote configuration and a narrow operation set", ()
     args: ["--rollback"]
   });
   assert.equal(parseOperation("update", []).script, "update");
-  assert.match(buildRemoteCommand(configuration, parseOperation("restart", [])), /translationbot-ops\.js/u);
+  const command = buildRemoteCommand(configuration, parseOperation("restart", []));
+  assert.match(command, /translationbot-ops\.js/u);
+  assert.match(command, /TRANSLATIONBOT_NODE='\/opt\/local\/bin\/node'/u);
+  assert.match(command, /TRANSLATIONBOT_PROJECT_ROOT='\/srv\/private\/TranslationBot'/u);
   assert.throws(
     () => parseConfiguration('{"host":"bad host","nodePath":"/bin/node","projectRoot":"/srv/bot"}'),
     ConfigurationError

@@ -148,7 +148,24 @@ function buildRemoteCommand(configuration, operation) {
         ? "safe-update.js"
         : "translationbot-ops.js";
   const scriptPath = path.posix.join(configuration.projectRoot, "scripts", scriptName);
-  return [configuration.nodePath, scriptPath, ...operation.args].map(shellQuote).join(" ");
+  const executablePath = [
+    path.posix.dirname(configuration.nodePath),
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin"
+  ]
+    .filter((directory, index, entries) => entries.indexOf(directory) === index)
+    .join(":");
+  const assignments = [
+    `PATH=${shellQuote(executablePath)}`,
+    `TRANSLATIONBOT_NODE=${shellQuote(configuration.nodePath)}`,
+    `TRANSLATIONBOT_PROJECT_ROOT=${shellQuote(configuration.projectRoot)}`
+  ];
+  const command = [configuration.nodePath, scriptPath, ...operation.args]
+    .map(shellQuote)
+    .join(" ");
+  return `${assignments.join(" ")} ${command}`;
 }
 
 async function runRemote(configuration, remoteCommand, environment = process.env) {

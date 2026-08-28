@@ -251,9 +251,9 @@ function parseLogArguments(args) {
   return { follow, lines };
 }
 
-async function runWithInheritedOutput(command, args, environment = process.env) {
+async function runWithInheritedOutput(command, args, environment = process.env, cwd) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: "inherit", env: environment });
+    const child = spawn(command, args, { stdio: "inherit", env: environment, cwd });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0) {
@@ -297,7 +297,8 @@ async function reportOllamaStatus(environment = process.env) {
   await runWithInheritedOutput(
     environment.TRANSLATIONBOT_NODE || process.execPath,
     [path.join(projectRoot(environment), "scripts", "ollama-status.js")],
-    environment
+    environment,
+    projectRoot(environment)
   );
 }
 
