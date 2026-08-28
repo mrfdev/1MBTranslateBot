@@ -1,11 +1,14 @@
-const cache = new Map();
+const { createHash } = require("node:crypto");
+const { BoundedTtlCache } = require("./cache");
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function cacheKey(...parts) {
-  return parts.join("\u001f").toLowerCase();
+  return createHash("sha256")
+    .update(parts.map((part) => String(part ?? "")).join("\u001f"))
+    .digest("hex");
 }
 
 function languageName(code) {
@@ -33,6 +36,7 @@ function normalizeConfidence(value) {
 async function postJson(url, body, timeoutMs) {
   const response = await fetch(url, {
     method: "POST",
+    redirect: "error",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json"
@@ -42,8 +46,10 @@ async function postJson(url, body, timeoutMs) {
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`LibreTranslate HTTP ${response.status}: ${text.slice(0, 200)}`);
+    await response.body?.cancel?.().catch(() => {});
+    const error = new Error("legacy-provider-unavailable");
+    error.code = "legacy-provider-unavailable";
+    throw error;
   }
 
   return response.json();
@@ -51,6 +57,7 @@ async function postJson(url, body, timeoutMs) {
 
 async function getJson(url, timeoutMs) {
   const response = await fetch(url, {
+    redirect: "error",
     headers: {
       Accept: "application/json"
     },
@@ -58,8 +65,10 @@ async function getJson(url, timeoutMs) {
   });
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`LibreTranslate HTTP ${response.status}: ${text.slice(0, 200)}`);
+    await response.body?.cancel?.().catch(() => {});
+    const error = new Error("legacy-provider-unavailable");
+    error.code = "legacy-provider-unavailable";
+    throw error;
   }
 
   return response.json();
@@ -73,6 +82,12 @@ class LibreTranslateClient {
     this.alternatives = options.alternatives;
     this.timeoutMs = options.timeoutMs;
     this.delayMs = options.delayMs;
+    this.cache =
+      options.cache ||
+      new BoundedTtlCache({
+        maxEntries: options.cacheMaxEntries,
+        ttlMs: options.cacheTtlMs
+      });
   }
 
   withApiKey(body) {
@@ -114,8 +129,9 @@ class LibreTranslateClient {
 
   async detect(text) {
     const key = cacheKey("detect", text);
-    if (cache.has(key)) {
-      return cache.get(key);
+    const cached = this.cache.get(key);
+    if (cached !== undefined) {
+      return cached;
     }
 
     const data = await postJson(
@@ -129,15 +145,16 @@ class LibreTranslateClient {
       confidence: normalizeConfidence(best?.confidence)
     };
 
-    cache.set(key, result);
+    this.cache.set(key, result);
     return result;
   }
 
   async translate(text, sourceLanguage) {
     const source = sourceLanguage || "auto";
-    const key = cacheKey("translate", source, this.targetLanguage, text);
-    if (cache.has(key)) {
-      return cache.get(key);
+    const key = cacheKey("translate", source, this.targetLanguage, this.alternatives, text);
+    const cached = this.cache.get(key);
+    if (cached !== undefined) {
+      return cached;
     }
 
     const data = await postJson(
@@ -161,7 +178,7 @@ class LibreTranslateClient {
       .map((item) => String(item || "").trim())
       .filter(Boolean);
     const result = [...new Set(allTranslations)];
-    cache.set(key, result);
+    this.cache.set(key, result);
     return result;
   }
 }

@@ -6,8 +6,28 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
+    "service:install": "node scripts/translationbot-ops.js install",
+    "service:start": "node scripts/translationbot-ops.js start",
+    "service:stop": "node scripts/translationbot-ops.js stop",
+    "service:restart": "node scripts/translationbot-ops.js restart",
+    "service:status": "node scripts/translationbot-ops.js status",
+    "service:logs": "node scripts/translationbot-ops.js logs",
+    "remote": "node scripts/translationbot-remote.js",
+    "remote:status": "node scripts/translationbot-remote.js status",
+    "remote:restart": "node scripts/translationbot-remote.js restart",
+    "remote:logs": "node scripts/translationbot-remote.js logs",
+    "remote:update": "node scripts/translationbot-remote.js update",
+    "remote:deploy": "node scripts/translationbot-remote.js deploy",
     "libretranslate": "scripts/start-libretranslate.sh",
-    "test": "node --test"
+    "test": "node --test",
+    "test:ollama": "RUN_OLLAMA_INTEGRATION=1 node --test test/ollama-live.test.js",
+    "ollama:status": "node scripts/ollama-status.js",
+    "evaluate": "node scripts/evaluate-translations.js",
+    "evaluate:json": "node scripts/evaluate-translations.js --json",
+    "check:syntax": "node --check src/*.js && node --check scripts/*.js && node --check test/*.js && bash -n scripts/start-libretranslate.sh scripts/remote scripts/install scripts/start scripts/stop scripts/restart scripts/status scripts/logs scripts/deploy",
+    "lint": "npm run check:syntax",
+    "build": "npm run check:syntax",
+    "check": "npm run check:syntax && npm test"
   },
   "engines": {
     "node": ">=20"

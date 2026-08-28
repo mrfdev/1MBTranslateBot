@@ -10,13 +10,18 @@ const COMMON_ENGLISH_WORDS = new Set([
   "at",
   "be",
   "because",
+  "book",
   "but",
   "can",
+  "claim",
+  "cobble",
   "come",
+  "diamond",
   "do",
   "does",
   "dont",
   "english",
+  "fish",
   "for",
   "from",
   "get",
@@ -31,12 +36,15 @@ const COMMON_ENGLISH_WORDS = new Set([
   "i",
   "if",
   "in",
+  "iron",
   "is",
   "it",
   "just",
   "like",
   "me",
+  "mayor",
   "my",
+  "myths",
   "no",
   "not",
   "now",
@@ -46,16 +54,26 @@ const COMMON_ENGLISH_WORDS = new Set([
   "one",
   "or",
   "please",
+  "plats",
+  "player",
+  "plots",
   "so",
+  "server",
+  "shop",
+  "smaller",
+  "sword",
   "that",
   "the",
   "then",
   "there",
   "this",
   "to",
+  "totem",
+  "town",
   "up",
   "we",
   "what",
+  "warp",
   "when",
   "where",
   "why",
@@ -64,6 +82,22 @@ const COMMON_ENGLISH_WORDS = new Set([
   "yes",
   "you",
   "your"
+]);
+
+const STRONG_SHORT_ENGLISH_WORDS = new Set([
+  "bye",
+  "hello",
+  "help",
+  "hey",
+  "hi",
+  "nope",
+  "ok",
+  "okay",
+  "please",
+  "sorry",
+  "thanks",
+  "welcome",
+  "yes"
 ]);
 
 function tokenize(text) {
@@ -79,12 +113,14 @@ function looksProbablyEnglish(text) {
     return false;
   }
 
-  if (/[^ -~\n\t]/.test(value)) {
+  // Emoji and curly punctuation do not make an otherwise English message foreign.
+  // Non-ASCII letters still indicate that local detection should defer to a provider.
+  if ([...value].some((character) => character.codePointAt(0) > 127 && /\p{L}/u.test(character))) {
     return false;
   }
 
   const tokens = tokenize(value).filter((token) => token.length > 1 || token === "i" || token === "a");
-  if (tokens.length < 3) {
+  if (tokens.length === 0) {
     return false;
   }
 
@@ -92,7 +128,23 @@ function looksProbablyEnglish(text) {
   const uniqueCommonHits = new Set(tokens.filter((token) => COMMON_ENGLISH_WORDS.has(token))).size;
   const ratio = commonHits / tokens.length;
 
+  if (tokens.length === 1) {
+    return STRONG_SHORT_ENGLISH_WORDS.has(tokens[0]);
+  }
+
+  if (tokens.length === 2) {
+    return (
+      tokens.every(
+        (token) => COMMON_ENGLISH_WORDS.has(token) || STRONG_SHORT_ENGLISH_WORDS.has(token)
+      ) && tokens.some((token) => STRONG_SHORT_ENGLISH_WORDS.has(token))
+    );
+  }
+
   if (tokens.includes("english") && uniqueCommonHits >= 2) {
+    return true;
+  }
+
+  if (tokens.length <= 4 && ratio === 1) {
     return true;
   }
 

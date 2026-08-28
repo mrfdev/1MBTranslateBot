@@ -1,168 +1,228 @@
 # 1MB Translate Bot
 
-This bot watches Discord Minecraft moderation logs, extracts private-message log lines such as `/cmi msg player text`, sign text from sign-placement logs, and book pages from book-edit logs. It detects the language and replies underneath with an English translation or a staff-attention flag.
+This Discord moderation helper extracts Minecraft private-message log lines, signs, and book pages. A private local Ollama model decides conservatively whether each candidate needs translation and, only when confidence is high enough, returns a natural English translation.
 
-Default target:
+The active translation path has no paid or cloud provider. If Ollama is unavailable, slow, overloaded, or returns suspicious output, the original text is left unchanged and the rest of the bot continues operating.
 
-- Server: `487398800353263616`
-- Message channel: `807177293943275530`
-- Signs channel: `1396738538229469184`
-- Books channel: `1397140960902647879`
+## Local AI architecture
 
-Example output:
+The default model is `qwen3:8b` over Ollama's native loopback API at `http://127.0.0.1:11434`.
 
-```text
-(Polish) `postaw pochodnie` == `place torches`
-:triangular_flag_on_post: (Dutch) `...` == `...`
-```
+For each candidate, the bot:
 
-## What it uses
+1. Skips clearly nonlinguistic input, commands, obvious English, known game terms, and genuinely ambiguous short fragments without a model call.
+2. Protects placeholders, Minecraft color codes, MiniMessage/Discord formatting, URLs, commands, punctuation, whitespace, and line breaks.
+3. Sends only bounded current text and optional bounded in-memory conversation context to loopback Ollama.
+4. Requests a low-temperature, non-thinking [structured output](https://docs.ollama.com/capabilities/structured-outputs) with this contract:
 
-- `discord.js` for Discord.
-- LibreTranslate for translation. This can use your own free self-hosted instance, or a hosted endpoint if you have an API key.
-- Local keyword heuristics for the `:triangular_flag_on_post:` warning. This is useful as a moderation hint, not a perfect hate-speech classifier.
+   ```json
+   {
+     "decision": "translate | leave_unchanged | uncertain",
+     "source_language": "ISO code or und",
+     "confidence": 0.0,
+     "translation": "English translation or null",
+     "reason_code": "foreign | english | mixed | proper_noun | too_short | nonlinguistic | uncertain"
+   }
+   ```
 
-Public translation endpoints can be rate-limited, unavailable, or require an API key. The best no-credit-card path is self-hosting LibreTranslate on the same VPS or another always-on machine.
+5. Validates the Ollama response envelope, exact configured model, fields, types, enums, cross-field meaning, size, formatting tokens, line structure, and output safety.
+6. Shows a translation only for a valid `translate` decision at or above `OLLAMA_MIN_CONFIDENCE` (default `0.90`).
 
-## 1. Create the Discord bot
+The client sends `stream:false`, `think:false`, temperature `0`, a fixed seed, and a small output budget through Ollama's [chat API](https://docs.ollama.com/api/chat). It never exposes model reasoning.
 
-1. Open the Discord Developer Portal: <https://discord.com/developers/applications>
-2. Create a new application.
-3. Go to **Bot** and create a bot.
-4. Copy the bot token.
-5. Enable **Message Content Intent** under the bot's privileged gateway intents.
-6. Invite the bot to your server with these permissions:
-   - View Channel
-   - Read Message History
-   - Send Messages
-   - Use External Emojis is optional
+## Privacy and safety guarantees
 
-Invite URL pattern:
+- Ollama must use an IPv4 or IPv6 loopback HTTP address. LAN, public, HTTPS, credentialed, path-bearing, and `0.0.0.0` endpoints fail configuration validation.
+- Cloud-model names are rejected. There are no OpenAI, Gemini, Groq, or other paid-provider credentials or SDKs in the translation path.
+- This project never installs Ollama, signs in, enables web search, or downloads a model during install or startup.
+- Ollama should run with cloud features disabled (`OLLAMA_NO_CLOUD=1` or `disable_ollama_cloud`), as described in the [Ollama FAQ](https://docs.ollama.com/faq).
+- Original messages, prompts, translations, raw model responses, and translation history are not written to logs or disk.
+- Result-cache keys are SHA-256 identities rather than raw text. Results and conversation context are bounded, in memory only, and expire.
+- Player names are not sent as model context. Prior translated turns are bounded and anonymized before a local request.
+- Discord mentions are neutralized in displayed text and every send disables allowed mentions.
+- Model-added mentions, URLs, commands, formatting, extra line breaks, and malformed or oversized output are rejected.
+- Player text and prior context are explicitly treated as untrusted data, never instructions.
+- Logs and health output contain aggregate decisions, latency, cache/queue counts, and safe error codes only.
 
-```text
-https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=68608&scope=bot
-```
+## Rollout modes
 
-Replace `YOUR_CLIENT_ID` with the application/client ID from the Developer Portal.
+`OLLAMA_MODE` controls the migration:
 
-For this bot application, the current invite URL is:
+- `off`: use the existing loopback-only LibreTranslate path and make no Ollama request.
+- `shadow`: preserve legacy visible output while Ollama decisions run privately in a bounded background queue.
+- `active`: Ollama alone controls translations. It never falls back to LibreTranslate when Ollama fails.
 
-```text
-https://discord.com/oauth2/authorize?client_id=1499923232843894794&permissions=137439333440&scope=bot
-```
+The checked-in example uses `active`. Use `shadow` first if you want an observation period before changing visible output. `off` and `shadow` reject non-loopback LibreTranslate URLs so those modes also keep analyzed text local.
 
-After inviting it, the bot should appear as a member of the server. If it does not, make sure you selected server `487398800353263616` while logged in with a Discord account that has **Manage Server** permission.
+## Installation and configuration
 
-## 2. Install the bot
+Requirements:
 
-From this folder:
+- Node.js 20 or newer
+- a Discord bot with Message Content Intent and access to the configured channels
+- a separately managed Ollama service with `qwen3:8b` already installed
+
+Install the JavaScript dependencies and create the private environment file:
 
 ```bash
 npm install
 cp .env.example .env
-nano .env
 ```
 
-Set at least:
+Set the Discord token, server ID, required message-log channel ID, and any optional sign/book/source IDs in `.env`. Real tokens, IDs, hostnames, usernames, and paths belong only in ignored local configuration.
+
+The minimum active configuration is:
 
 ```env
-DISCORD_TOKEN=your-real-token
-DISCORD_GUILD_ID=487398800353263616
-LOG_CHANNEL_ID=807177293943275530
-SIGN_CHANNEL_ID=1396738538229469184
-BOOK_CHANNEL_ID=1397140960902647879
+DISCORD_TOKEN=your-private-token
+DISCORD_GUILD_ID=your-server-id
+LOG_CHANNEL_ID=your-message-log-channel-id
+
+OLLAMA_MODE=active
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_MIN_CONFIDENCE=0.90
 ```
 
-Leave `SOURCE_BOT_IDS` blank at first. The bot will watch any bot/webhook message in the configured channels except itself. Once you know the MSG SPY bot's Discord user ID, set:
+See [.env.example](.env.example) for timeout, queue, cache, context, circuit-breaker, output, and legacy settings.
 
-```env
-SOURCE_BOT_IDS=the-msg-spy-bot-user-id
-```
+### Private transport when developing from another computer
 
-That prevents the translator from reacting to other bots in the same channel.
-
-## 3. Run free translation locally
-
-LibreTranslate is free and open source. Run it in a second `tmux` session:
+Production is simplest when the bot and Ollama run on the same host and communicate over loopback. For a temporary development check from another trusted computer, use an existing private SSH connection and bind only a local loopback port:
 
 ```bash
-tmux new -s libretranslate
-cd /Users/floris/Projects/Codex/1MBTranslateBot
-npm run libretranslate
+ssh -N -L 127.0.0.1:11435:127.0.0.1:11434 <private-host-alias>
+OLLAMA_BASE_URL=http://127.0.0.1:11435 npm run ollama:status
 ```
 
-Detach from tmux with `Ctrl-b`, then `d`.
+Do not change Ollama to listen on a LAN interface and do not commit the private host alias.
 
-On macOS/Homebrew Python, installing with `python3 -m pip install --user libretranslate` can fail with `externally-managed-environment`. The `npm run libretranslate` command avoids that by creating a local `.venv-libretranslate/` virtual environment and installing LibreTranslate there.
+## Health and failure behavior
 
-The bot defaults to:
+Run the privacy-safe readiness check:
 
-```env
-LIBRETRANSLATE_URL=http://127.0.0.1:5000
-LIBRETRANSLATE_API_KEY=
+```bash
+npm run ollama:status
 ```
 
-If you use hosted LibreTranslate instead, set the hosted URL and put the key in `LIBRETRANSLATE_API_KEY`.
+It reports only whether the Ollama service and configured model are available. It does not print the endpoint, hostname, username, path, model inventory, prompts, or responses.
 
-Optional: LibreTranslate can provide alternative translations:
+Runtime protection defaults:
 
-```env
-TRANSLATION_ALTERNATIVES=2
-MAX_TRANSLATIONS_PER_MESSAGE=1
-MAX_ORIGINAL_LENGTH=600
-MAX_TRANSLATION_LENGTH=600
+- one active Ollama request and sixteen queued requests
+- a 45-second request timeout and 2-second health timeout
+- circuit opens after three consecutive provider failures and retries after 60 seconds
+- 2,000 cached decisions for six hours, in memory only
+- simultaneous normalized requests share one in-flight model call
+- Discord message processing has its own bounded queue
+
+A timeout, queue rejection, open circuit, connection error, missing model, invalid JSON/schema, wrong model identity, unsafe output, or low-confidence/uncertain decision produces no translation. Active mode never invokes the legacy provider as a fallback.
+
+## Testing
+
+Normal checks use mocked Ollama responses and never require a model or download:
+
+```bash
+npm run check
 ```
 
-`TRANSLATION_ALTERNATIVES` asks LibreTranslate for extra options. `MAX_TRANSLATIONS_PER_MESSAGE` controls how many the Discord bot prints. The default is `1` to keep moderation logs readable. The length limits are intentionally roomy enough for sign and book-page text.
+Useful individual commands:
 
-## 4. Run it
+```bash
+npm test
+npm run lint
+npm run build
+```
 
-Test in the foreground:
+The project is plain CommonJS JavaScript, so `lint` and `build` perform syntax validation; there is no separate TypeScript compilation step.
+
+Run the optional live integration test only when a loopback Ollama endpoint is ready:
+
+```bash
+RUN_OLLAMA_INTEGRATION=1 npm run test:ollama
+```
+
+The test uses synthetic Dutch text and verifies model readiness, the conservative threshold, placeholder preservation, and punctuation preservation. It never uses production messages.
+
+## Synthetic evaluation
+
+The version-controlled corpus at `fixtures/translation-evaluation.json` contains synthetic English, names, game terms, commands, ambiguous fragments, Dutch, Polish, Spanish, French, German, Portuguese, Italian, Russian, Japanese, mixed-language, formatted, injection-attempt, and multiline cases.
+
+Run it against the configured local model:
+
+```bash
+npm run evaluate
+```
+
+It compares the old dictionary-style candidate gate with the active Ollama gate and reports false positives, false negatives, accepted translation quality, formatting preservation, and provider errors separately. It prints fixture IDs for synthetic cases needing review, never message text or raw responses.
+
+Verified on 2026-08-28 with local `qwen3:8b`:
+
+```text
+Synthetic fixtures: 33
+Legacy candidate gate: 20 false positives, 1 false negative
+Ollama active gate: 0 false positives, 0 false negatives
+Accepted translation quality: 13/13 (100%)
+Legacy false-positive reduction: 100%
+Provider errors: 0
+```
+
+Model versions and local runtimes can change behavior, so rerun the corpus before each model or Ollama upgrade.
+
+## Running the bot
+
+Start in the foreground:
 
 ```bash
 npm start
 ```
 
-On startup, the bot checks Discord access and LibreTranslate access. If LibreTranslate is not running, it prints the exact `tmux` and `npm run libretranslate` commands to start it.
+Startup reports Discord access, rollout mode, bounded capacity, and privacy-safe provider readiness. It does not print message content, private destination IDs, endpoints, hostnames, or raw errors.
 
-Run it in `tmux`:
+Deterministic risk flags remain available through `ENABLE_RISK_FLAG` and `FLAGGED_TERMS`. They are independent of Ollama availability and do not turn a failed translation into a legacy fallback.
 
-```bash
-tmux new -s translatebot
-cd /Users/floris/Projects/Codex/1MBTranslateBot
-npm start
-```
+## Managed macOS service
 
-Detach from tmux with `Ctrl-b`, then `d`.
+The production host can run TranslationBot as the per-user LaunchAgent `com.mrfdev.translationbot`. The tracked plist is a sanitized template containing no username, home path, Discord destination, credential, or private host. `RunAtLoad` starts the bot after login, and `KeepAlive` restarts it after an unexpected failure. Do not run a second manual `npm start` process beside the managed service.
 
-Reattach later:
+Host-local operations are:
 
 ```bash
-tmux attach -t translatebot
+./scripts/install
+./scripts/start
+./scripts/stop
+./scripts/restart
+./scripts/status
+./scripts/logs --lines 100
+./scripts/logs --follow
+./scripts/deploy
+./scripts/deploy --rollback
 ```
 
-Stop it while attached:
+Service output is captured in owner-only `logs/translationbot-service.log` and `logs/translationbot-service.error.log`. The two streams rotate independently, keep a bounded archive count, and stop accepting writes before the configured free-disk reserve would be consumed. They contain timestamps and privacy-safe operational records, not Discord message text or model responses.
+
+Deployment is release-based. The deployer exports only the committed Git revision into an ignored staging directory, runs `npm ci` and the complete local check before activation, links the owner-only host `.env` and persistent logs, then atomically switches the active release. It succeeds only after launchd reports a running process and fresh service output confirms Discord plus the configured local translation backend are available. Failed activation restores and verifies the preceding release; explicit rollback swaps the last two verified releases.
+
+For remote operation from an authorized workstation, create the ignored owner-only configuration:
 
 ```bash
-Ctrl-c
+cp .translationbot-remote.example.json .translationbot-remote.json
+chmod 600 .translationbot-remote.json
 ```
 
-## 5. Risk flag tuning
+Fill in the SSH destination and absolute remote Node/project paths, then use the narrow wrapper:
 
-The bot has a small built-in profanity/risk list and checks both the original text and the translation. Add your own community-specific terms in `.env`:
-
-```env
-FLAGGED_TERMS=term one,term two,term three
+```bash
+./scripts/remote status
+./scripts/remote ollama-status
+./scripts/remote start
+./scripts/remote stop
+./scripts/remote restart
+./scripts/remote logs --lines 100
+./scripts/remote logs --follow
+./scripts/remote update
+./scripts/remote deploy
+./scripts/remote deploy --rollback
 ```
 
-Disable flagging:
-
-```env
-ENABLE_RISK_FLAG=false
-```
-
-## Notes
-
-- English messages are skipped when language detection is confident enough, unless risk flagging catches profanity or staff-attention terms.
-- Very short messages such as `cmok` can be hard for any free language detector. The bot still tries, but expect occasional misses.
-- The bot asks LibreTranslate for alternatives when supported. Natural alternatives like `kiss` / `mwah` are still only a machine-translation hint.
+The wrapper uses noninteractive SSH, accepts only these operations and bounded log arguments, and never exposes controls through Discord. `update` permits only a clean fast-forward of the configured upstream and never restarts the bot. Run `deploy` afterward to stage, validate, and activate the new commit.

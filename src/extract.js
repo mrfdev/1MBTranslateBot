@@ -5,13 +5,6 @@ function normalizeText(value) {
     .trim();
 }
 
-function stripMinecraftFormatting(value) {
-  return value
-    .replace(/§[0-9A-FK-OR]/gi, "")
-    .replace(/&[0-9A-FK-OR]/gi, "")
-    .trim();
-}
-
 function collectEmbedText(embed) {
   const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
   const parts = [];
@@ -26,6 +19,30 @@ function collectEmbedText(embed) {
         parts.push(field.value);
       }
     }
+  }
+
+  return parts;
+}
+
+function collectEmbedMetadataText(embed) {
+  const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
+  const parts = [...collectEmbedText(data)];
+
+  if (data.author?.name) {
+    parts.push(data.author.name);
+  }
+  if (data.title) {
+    parts.push(data.title);
+  }
+  if (Array.isArray(data.fields)) {
+    for (const field of data.fields) {
+      if (field.name) {
+        parts.push(field.name);
+      }
+    }
+  }
+  if (data.footer?.text) {
+    parts.push(data.footer.text);
   }
 
   return parts;
@@ -86,53 +103,113 @@ function removeDiscordMarkdown(value) {
     .trim();
 }
 
-function extractTextFromCommand(line) {
-  const cleaned = stripMinecraftFormatting(removeDiscordMarkdown(normalizeText(line)));
-  if (!cleaned) {
+function parseCommand(line) {
+  const raw = String(line || "")
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/^>+\s?/gm, "");
+  const commandStart = raw.search(
+    /\/(?:cmi\s+)?(?:msg|message|tell|w|whisper|m|pm)\b|\/(?:r|reply|me)\b/i
+  );
+  if (commandStart < 0) {
     return null;
   }
+  const cleaned = raw.slice(commandStart).replace(/```+\s*$/u, "");
 
   const directMessageMatch = cleaned.match(
-    /(?:^|\s)\/(?:cmi\s+)?(?:msg|message|tell|w|whisper|m|pm)\s+\S+\s+([\s\S]+)$/i
+    /^\/(?:cmi\s+)?(msg|message|tell|w|whisper|m|pm)\s+(\S+)\s+([\s\S]+)$/i
   );
   if (directMessageMatch) {
-    return cleanExtractedText(directMessageMatch[1]);
+    const text = cleanExtractedText(directMessageMatch[3]);
+    return text
+      ? {
+          text,
+          kind: "direct-message",
+          command: directMessageMatch[1].toLowerCase(),
+          recipient: cleanParticipant(directMessageMatch[2])
+        }
+      : null;
   }
 
-  const replyMatch = cleaned.match(/(?:^|\s)\/(?:r|reply)\s+([\s\S]+)$/i);
+  const replyMatch = cleaned.match(/^\/(?:r|reply)\s+([\s\S]+)$/i);
   if (replyMatch) {
-    return cleanExtractedText(replyMatch[1]);
+    const text = cleanExtractedText(replyMatch[1]);
+    return text
+      ? {
+          text,
+          kind: "reply",
+          command: "reply",
+          recipient: null
+        }
+      : null;
   }
 
-  const meMatch = cleaned.match(/(?:^|\s)\/me\s+([\s\S]+)$/i);
+  const meMatch = cleaned.match(/^\/me\s+([\s\S]+)$/i);
   if (meMatch) {
-    return cleanExtractedText(meMatch[1]);
+    const text = cleanExtractedText(meMatch[1]);
+    return text
+      ? {
+          text,
+          kind: "action",
+          command: "me",
+          recipient: null
+        }
+      : null;
+  }
+
+  return null;
+}
+
+function extractTextFromCommand(line) {
+  return parseCommand(line)?.text || null;
+}
+
+function cleanParticipant(value) {
+  const cleaned = String(value || "")
+    .replace(/^[`*_~'\"]+/, "")
+    .replace(/[`*_~'\",.:;!?]+$/, "")
+    .trim();
+
+  return cleaned || null;
+}
+
+function extractMessageActor(parts) {
+  for (const part of parts) {
+    const raw = String(part || "");
+    const marked = raw.match(/^(?:>+\s*)?(?:\*\*)?Message by\s+`([^`\r\n]+)`/im);
+    if (marked) {
+      return cleanParticipant(marked[1]);
+    }
+
+    const plain = removeDiscordMarkdown(raw).match(/^Message by\s+([^\s,\r\n]+)/im);
+    if (plain) {
+      return cleanParticipant(plain[1]);
+    }
   }
 
   return null;
 }
 
 function cleanExtractedText(value) {
-  const cleaned = normalizeText(value)
-    .replace(/^[`'"]+/, "")
-    .replace(/[`'"]+$/, "")
-    .trim();
+  const cleaned = String(value || "")
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/^```(?:text)?\s*/iu, "")
+    .replace(/```+\s*$/u, "");
 
-  return cleaned || null;
+  return cleaned.trim() ? cleaned : null;
 }
 
 function cleanSignText(value) {
-  const cleaned = stripMinecraftFormatting(String(value || ""))
+  let cleaned = String(value || "")
     .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+$/g, ""))
-    .join("\n")
-    .replace(/^[`'"]+/, "")
-    .replace(/[`'"]+$/, "")
-    .trim();
+    .replace(/\r/g, "\n");
+  if (cleaned.startsWith("\n")) {
+    cleaned = cleaned.slice(1);
+  }
+  if (cleaned.endsWith("\n")) {
+    cleaned = cleaned.slice(0, -1);
+  }
 
-  return cleaned || null;
+  return cleaned.trim() ? cleaned : null;
 }
 
 function textKey(value) {
@@ -178,26 +255,56 @@ function extractFencedTextsFromParts(parts) {
 }
 
 function extractTranslatableTextsFromParts(parts) {
+  return extractTranslatableEntriesFromParts(parts).map((entry) => entry.text);
+}
+
+function entryKey(entry) {
+  return [
+    entry.actor || "",
+    entry.kind,
+    entry.recipient || "",
+    textKey(entry.text)
+  ].join("\u001f");
+}
+
+function extractTranslatableEntriesFromParts(parts, options = {}) {
   const seen = new Set();
   const results = [];
+  const detectedActors = [
+    ...new Set(parts.flatMap((part) => extractMessageActor([part]) || []).filter(Boolean))
+  ];
+  const fallbackActor = options.actor || (detectedActors.length === 1 ? detectedActors[0] : null);
 
   for (const part of parts) {
-    const raw = normalizeText(part);
-    if (!raw) {
-      continue;
-    }
+    const records = String(part || "").split(/(?=^(?:>+\s*)?(?:\*\*)?Message by\s+)/gim);
+    for (const record of records) {
+      const raw = String(record || "").replace(/\r\n|\r/g, "\n");
+      if (!raw.trim()) {
+        continue;
+      }
 
-    const candidates = [...extractMarkedCode(raw), stripMarkedCode(raw)];
-    for (const candidate of candidates) {
-      for (const line of candidate.split("\n")) {
-        const text = extractTextFromCommand(line);
-        const key = textKey(text);
-        if (!text || !key || seen.has(key)) {
-          continue;
+      const actor = extractMessageActor([record]) || fallbackActor;
+
+      const candidates = [...extractMarkedCode(raw), stripMarkedCode(raw)];
+      for (const candidate of candidates) {
+        for (const line of candidate.split("\n")) {
+          const parsed = parseCommand(line);
+          if (!parsed) {
+            continue;
+          }
+
+          const entry = {
+            ...parsed,
+            actor
+          };
+          const key = entryKey(entry);
+          if (seen.has(key)) {
+            continue;
+          }
+
+          seen.add(key);
+          results.push(entry);
         }
-
-        seen.add(key);
-        results.push(text);
       }
     }
   }
@@ -206,7 +313,48 @@ function extractTranslatableTextsFromParts(parts) {
 }
 
 function extractTranslatableTexts(message) {
-  return extractTranslatableTextsFromParts(collectMessageTextParts(message));
+  return extractTranslatableEntries(message).map((entry) => entry.text);
+}
+
+function extractTranslatableEntries(message) {
+  const entries = [];
+  if (message.content) {
+    entries.push(...extractTranslatableEntriesFromParts([message.content]));
+  }
+
+  if (Array.isArray(message.embeds)) {
+    for (const embed of message.embeds) {
+      const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
+      const embedActor = extractMessageActor(collectEmbedMetadataText(data));
+
+      if (data.description) {
+        const actor = extractMessageActor([data.description]) || embedActor;
+        entries.push(...extractTranslatableEntriesFromParts([data.description], { actor }));
+      }
+
+      if (Array.isArray(data.fields)) {
+        for (const field of data.fields) {
+          if (!field.value) {
+            continue;
+          }
+
+          const actor = extractMessageActor([field.name, field.value]) || embedActor;
+          entries.push(...extractTranslatableEntriesFromParts([field.value], { actor }));
+        }
+      }
+    }
+  }
+
+  const seen = new Set();
+  return entries.filter((entry) => {
+    const key = entryKey(entry);
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 function extractSignTexts(message) {
@@ -221,9 +369,13 @@ module.exports = {
   collectMessageTextParts,
   extractBookTexts,
   extractBookTextsFromParts,
+  extractMessageActor,
+  extractTranslatableEntries,
+  extractTranslatableEntriesFromParts,
   extractTextFromCommand,
   extractSignTexts,
   extractSignTextsFromParts,
   extractTranslatableTexts,
-  extractTranslatableTextsFromParts
+  extractTranslatableTextsFromParts,
+  parseCommand
 };

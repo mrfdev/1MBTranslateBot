@@ -10,6 +10,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 logs/
+.deploy/
+.translationbot-remote.json
 *.log
 coverage/
 dist/

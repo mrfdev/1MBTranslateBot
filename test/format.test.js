@@ -15,3 +15,31 @@ test("formats multiline sign translations as code blocks", () => {
     "(French)\n```text\nje suis ici\nmais je peux\nparler un\npetit francais\n```\n==\n```text\ni'm here.\nbut i can't.\nspeak one\nsmall french\n```"
   );
 });
+
+test("includes and sanitizes a review reason with a translation", () => {
+  const output = formatTranslation({
+    original: "ik maak je dood",
+    translations: ["I will kill you"],
+    languageLabel: "Dutch",
+    flagged: true,
+    note: "credible `threat`\nagainst another player"
+  });
+
+  assert.equal(
+    output,
+    ":triangular_flag_on_post: (Dutch) `ik maak je dood` == `I will kill you`\nReview: `credible 'threat' against another player`"
+  );
+});
+
+test("neutralizes mentions and markdown fences in both original and translated output", () => {
+  const output = formatTranslation({
+    original: "hola @everyone `now`",
+    translations: ["hello <@123456789012345678> ```now```"],
+    languageLabel: "Spanish",
+    flagged: false
+  });
+
+  assert.doesNotMatch(output, /@everyone|<@123456789012345678>|```now```/u);
+  assert.match(output, /@\u200beveryone/u);
+  assert.match(output, /<@\u200b123456789012345678>/u);
+});
