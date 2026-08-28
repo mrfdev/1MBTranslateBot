@@ -24,6 +24,7 @@ function healthyInput(overrides = {}) {
     discord: {
       gateway: "ready",
       server: "available",
+      command: "available",
       channels: {
         message_log: "available",
         sign_log: "available",
@@ -93,6 +94,7 @@ test("builds a healthy privacy-safe runtime snapshot", () => {
 test("marks runtime dependencies and saturated queues as requiring attention", () => {
   const input = healthyInput();
   input.discord.gateway = "disconnected";
+  input.discord.command = "unavailable";
   input.backend.ollama_model_available = false;
   input.messageQueue = { active: 2, queued: 100, max_concurrency: 2, queue_limit: 100 };
   const snapshot = buildHealthSnapshot(input, new Date("2026-08-28T03:05:00.000Z"));
@@ -100,6 +102,7 @@ test("marks runtime dependencies and saturated queues as requiring attention", (
   assert.equal(snapshot.status, "attention");
   assert.deepEqual(snapshot.attention, [
     "discord-gateway-not-ready",
+    "discord-health-command-unavailable",
     "ollama-model-unavailable",
     "message-queue-saturated"
   ]);

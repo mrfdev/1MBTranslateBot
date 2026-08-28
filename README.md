@@ -181,6 +181,15 @@ npm start
 
 Startup reports Discord access, rollout mode, bounded capacity, and privacy-safe provider readiness. It does not print message content, private destination IDs, endpoints, hostnames, or raw errors.
 
+Members with Discord's Manage Server permission can use the guild-scoped commands:
+
+```text
+/translationbot health
+/translationbot alert-test
+```
+
+Both replies are ephemeral and privacy-safe. `health` reports the running process, Discord/channel/command readiness, active local provider, circuit, cache, queues, aggregate activity, version, release, and uptime. `alert-test` returns the same view with a simulated attention marker and never stops, restarts, or changes the service. No start, stop, restart, log, update, or deployment control is exposed through Discord.
+
 Deterministic risk flags remain available through `ENABLE_RISK_FLAG` and `FLAGGED_TERMS`. They are independent of Ollama availability and do not turn a failed translation into a legacy fallback.
 
 ## Managed macOS service
@@ -206,7 +215,7 @@ Host-local operations are:
 
 Service output is captured in owner-only `logs/translationbot-service.log` and `logs/translationbot-service.error.log`. The two streams rotate independently, keep a bounded archive count, and stop accepting writes before the configured free-disk reserve would be consumed. They contain timestamps and privacy-safe operational records, not Discord message text or model responses.
 
-`health` combines launchd state with a fresh owner-only runtime snapshot. It checks the active release and version, Discord gateway/server/channel readiness, configured translation backend, Ollama circuit, caches, queues, context counts, aggregate activity, uptime, and memory. Exit status `0` means healthy, `2` means running but requiring attention, and `3` means unavailable. `--json` provides the same bounded data for monitoring. `--alert-test` deliberately returns attention status `2` with the safe code `alert-test`, without stopping or changing the service, so alert wiring can be tested. The runtime refreshes the snapshot every `HEALTH_SNAPSHOT_INTERVAL_MS` (30 seconds by default).
+`health` combines launchd state with a fresh owner-only runtime snapshot. It checks the active release and version, Discord gateway/server/channel/slash-command readiness, configured translation backend, Ollama circuit, caches, queues, context counts, aggregate activity, uptime, and memory. Exit status `0` means healthy, `2` means running but requiring attention, and `3` means unavailable. `--json` provides the same bounded data for monitoring. `--alert-test` deliberately returns attention status `2` with the safe code `alert-test`, without stopping or changing the service, so alert wiring can be tested. The runtime refreshes the snapshot every `HEALTH_SNAPSHOT_INTERVAL_MS` (30 seconds by default).
 
 Deployment is release-based. The deployer exports only the committed Git revision into an ignored staging directory, runs `npm ci` and the complete local check before activation, links the owner-only host `.env` and persistent logs, then atomically switches the active release. It succeeds only after launchd reports a running process and fresh service output confirms Discord plus the configured local translation backend are available. Failed activation restores and verifies the preceding release; explicit rollback swaps the last two verified releases.
 

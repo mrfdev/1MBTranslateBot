@@ -333,7 +333,7 @@ function printHumanHealth(report) {
     `Application: v${snapshot.application.version}, release ${release}, uptime ${formatUptime(snapshot.application.uptime_seconds)}`
   );
   console.log(
-    `Discord: gateway ${snapshot.discord.gateway}, server ${snapshot.discord.server}, message ${snapshot.discord.channels.message_log}, signs ${snapshot.discord.channels.sign_log}, books ${snapshot.discord.channels.book_log}`
+    `Discord: gateway ${snapshot.discord.gateway}, server ${snapshot.discord.server}, command ${snapshot.discord.command}, message ${snapshot.discord.channels.message_log}, signs ${snapshot.discord.channels.sign_log}, books ${snapshot.discord.channels.book_log}`
   );
   console.log(
     `Translation: ${snapshot.translation.mode}, Ollama service ${availability(snapshot.translation.backend.ollama_service_available)}, model ${availability(snapshot.translation.backend.ollama_model_available)}, dictionary ${availability(snapshot.translation.backend.legacy_available)}, circuit ${snapshot.translation.circuit.state}`

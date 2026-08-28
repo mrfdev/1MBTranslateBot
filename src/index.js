@@ -3,6 +3,13 @@ const path = require("node:path");
 const packageJson = require("../package.json");
 const { loadConfig } = require("./config");
 const { ConversationContextStore } = require("./context");
+const {
+  canUseHealthCommand,
+  ensureHealthCommand,
+  ephemeralReply,
+  formatDiscordHealth,
+  isHealthCommandInteraction
+} = require("./discord-health");
 const { extractBookTexts, extractSignTexts, extractTranslatableEntries } = require("./extract");
 const { formatTranslation: formatTranslationResult } = require("./format");
 const { buildHealthSnapshot, writeHealthSnapshot } = require("./health");
@@ -78,6 +85,7 @@ const healthState = {
   discord: {
     gateway: "connecting",
     server: "unknown",
+    command: "registering",
     channels: {
       message_log: "unknown",
       sign_log: config.signChannelId ? "unknown" : "not-configured",
@@ -94,32 +102,38 @@ const healthState = {
 };
 let healthWriteFailures = 0;
 
+function createHealthSnapshot() {
+  const translationMetrics = translationService.metricsSnapshot();
+  return buildHealthSnapshot({
+    version: packageJson.version,
+    release: process.env.TRANSLATIONBOT_RELEASE,
+    startedAt: serviceStartedAt,
+    heartbeatIntervalMs: config.healthSnapshotIntervalMs,
+    lifecycle: healthState.lifecycle,
+    discord: healthState.discord,
+    translationMode: config.translationMode,
+    backend: healthState.backend,
+    translationMetrics,
+    legacyMetrics: legacy?.metricsSnapshot?.() || null,
+    messageQueue: messageQueue.snapshot(),
+    context: conversationContext.snapshot(),
+    cacheMaxEntries: config.translationCacheMaxEntries,
+    cacheTtlMs: config.translationCacheTtlMs
+  });
+}
+
 function publishHealthSnapshot() {
   try {
-    const translationMetrics = translationService.metricsSnapshot();
-    const snapshot = buildHealthSnapshot({
-      version: packageJson.version,
-      release: process.env.TRANSLATIONBOT_RELEASE,
-      startedAt: serviceStartedAt,
-      heartbeatIntervalMs: config.healthSnapshotIntervalMs,
-      lifecycle: healthState.lifecycle,
-      discord: healthState.discord,
-      translationMode: config.translationMode,
-      backend: healthState.backend,
-      translationMetrics,
-      legacyMetrics: legacy?.metricsSnapshot?.() || null,
-      messageQueue: messageQueue.snapshot(),
-      context: conversationContext.snapshot(),
-      cacheMaxEntries: config.translationCacheMaxEntries,
-      cacheTtlMs: config.translationCacheTtlMs
-    });
+    const snapshot = createHealthSnapshot();
     writeHealthSnapshot(serviceProjectRoot, snapshot);
     healthWriteFailures = 0;
+    return snapshot;
   } catch {
     healthWriteFailures += 1;
     if (healthWriteFailures === 1) {
       console.error("[translate-bot] Health snapshot write failed.");
     }
+    return null;
   }
 }
 
@@ -338,6 +352,7 @@ async function logRuntimeAccess(readyClient) {
   } catch {
     console.error("[translate-bot] Configured Discord server: unavailable");
     healthState.discord.server = "unavailable";
+    healthState.discord.command = "unavailable";
     healthState.discord.channels.message_log = "unavailable";
     healthState.discord.channels.sign_log = config.signChannelId
       ? "unavailable"
@@ -346,7 +361,7 @@ async function logRuntimeAccess(readyClient) {
       ? "unavailable"
       : "not-configured";
     publishHealthSnapshot();
-    return;
+    return null;
   }
   console.log("[translate-bot] Configured Discord server: available");
   healthState.discord.server = "available";
@@ -366,7 +381,35 @@ async function logRuntimeAccess(readyClient) {
     config.bookChannelId
   );
   publishHealthSnapshot();
-  void guild;
+  return guild;
+}
+
+async function registerRuntimeHealthCommand(guild) {
+  try {
+    const registration = await ensureHealthCommand(guild);
+    healthState.discord.command = "available";
+    console.log(`[translate-bot] Discord health command: ${registration}`);
+  } catch {
+    healthState.discord.command = "unavailable";
+    console.error("[translate-bot] Discord health command: unavailable");
+  }
+  publishHealthSnapshot();
+}
+
+async function handleHealthInteraction(interaction) {
+  if (!canUseHealthCommand(interaction, config.guildId)) {
+    await interaction.reply(
+      ephemeralReply("Manage Server permission is required to view TranslationBot health.")
+    );
+    return;
+  }
+  const subcommand = interaction.options.getSubcommand(true);
+  const snapshot = createHealthSnapshot();
+  await interaction.reply(
+    ephemeralReply(
+      formatDiscordHealth(snapshot, { alertTest: subcommand === "alert-test" })
+    )
+  );
 }
 
 let backendRefreshPromise = null;
@@ -432,8 +475,11 @@ client.once(Events.ClientReady, (readyClient) => {
     console.log("[translate-bot] SOURCE_BOT_IDS is empty; all eligible bots/webhooks are watched.");
   }
   void (async () => {
-    await logRuntimeAccess(readyClient);
-    await refreshTranslationBackend({ announce: true });
+    const guild = await logRuntimeAccess(readyClient);
+    await Promise.all([
+      guild ? registerRuntimeHealthCommand(guild) : null,
+      refreshTranslationBackend({ announce: true })
+    ]);
   })();
 });
 
@@ -462,6 +508,20 @@ client.on(Events.MessageCreate, (message) => {
     console.error(
       `[translate-bot] Message work was rejected (${safeErrorCode(error)}); content was left unchanged.`
     );
+  });
+});
+
+client.on(Events.InteractionCreate, (interaction) => {
+  if (!isHealthCommandInteraction(interaction)) {
+    return;
+  }
+  void handleHealthInteraction(interaction).catch(async () => {
+    console.error("[translate-bot] Discord health command response failed.");
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction
+        .reply(ephemeralReply("TranslationBot health could not be read right now."))
+        .catch(() => {});
+    }
   });
 });
 

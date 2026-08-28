@@ -40,6 +40,7 @@ function collectAttention(snapshot) {
   add(snapshot.lifecycle !== "running", `service-${snapshot.lifecycle}`);
   add(snapshot.discord.gateway !== "ready", "discord-gateway-not-ready");
   add(snapshot.discord.server !== "available", "discord-server-unavailable");
+  add(snapshot.discord.command !== "available", "discord-health-command-unavailable");
   add(snapshot.discord.channels.message_log !== "available", "message-log-channel-unavailable");
   add(
     !["available", "not-configured"].includes(snapshot.discord.channels.sign_log),
@@ -98,6 +99,7 @@ function buildHealthSnapshot(input = {}, now = new Date()) {
     discord: {
       gateway: safeState(input.discord?.gateway, "unknown"),
       server: safeState(input.discord?.server, "unknown"),
+      command: safeState(input.discord?.command, "unknown"),
       channels: {
         message_log: safeState(input.discord?.channels?.message_log, "unknown"),
         sign_log: safeState(input.discord?.channels?.sign_log, "unknown"),
