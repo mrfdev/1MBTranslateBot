@@ -3,6 +3,7 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   parseJobState,
+  parseHealthArguments,
   parseLogArguments,
   renderServiceDefinition,
   xmlEscape
@@ -53,6 +54,15 @@ test("bounds log-viewing arguments", () => {
   assert.throws(() => parseLogArguments(["--unknown"]), /Unknown/u);
 });
 
+test("accepts only explicit health output and alert-test switches", () => {
+  assert.deepEqual(parseHealthArguments(["--json", "--alert-test"]), {
+    json: true,
+    alertTest: true
+  });
+  assert.throws(() => parseHealthArguments(["--json", "--json"]), /repeated/u);
+  assert.throws(() => parseHealthArguments(["--details"]), /Unknown/u);
+});
+
 test("validates owner-local remote configuration and a narrow operation set", () => {
   const configuration = parseConfiguration(
     JSON.stringify({
@@ -62,6 +72,10 @@ test("validates owner-local remote configuration and a narrow operation set", ()
     })
   );
   assert.equal(parseOperation("status", []).script, "operations");
+  assert.deepEqual(parseOperation("health", ["--json", "--alert-test"]), {
+    script: "operations",
+    args: ["health", "--json", "--alert-test"]
+  });
   assert.deepEqual(parseOperation("deploy", ["--rollback"]), {
     script: "deploy",
     args: ["--rollback"]
@@ -76,6 +90,7 @@ test("validates owner-local remote configuration and a narrow operation set", ()
     ConfigurationError
   );
   assert.throws(() => parseOperation("shell", []), /Usage/u);
+  assert.throws(() => parseOperation("health", ["--verbose"]), /health argument/u);
 });
 
 test("escapes generated plist values and requires complete active Ollama health", () => {

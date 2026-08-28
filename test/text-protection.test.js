@@ -71,6 +71,22 @@ test("deterministically restores omitted boundary markers", () => {
   );
 });
 
+test("restores model-rendered line breaks only when they exactly match the protected layout", () => {
+  const protection = protectText("bonjour ici\nje peux parler\navec mes amis");
+  assert.equal(
+    restoreProtectedText("hello here\ni can speak\nwith my friends", protection),
+    "hello here\ni can speak\nwith my friends"
+  );
+  assert.throws(
+    () => restoreProtectedText("hello here\ni can speak with my friends", protection),
+    (error) => error.code === "line-break-mismatch"
+  );
+  assert.throws(
+    () => restoreProtectedText("hello here\ni can speak\nwith\nmy friends", protection),
+    (error) => error.code === "line-break-mismatch"
+  );
+});
+
 test("rejects model-added mentions, links, formatting, commands, and line breaks", () => {
   const protection = protectText("hola amigo");
   for (const output of [

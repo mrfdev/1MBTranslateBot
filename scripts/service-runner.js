@@ -56,14 +56,20 @@ async function main() {
     process.env.TRANSLATIONBOT_PROJECT_ROOT || path.resolve(__dirname, "..")
   );
   const currentRelease = path.join(sourceRoot, ".deploy", "current");
+  const resolvedRelease = await fs.realpath(currentRelease);
+  const releaseName = path.basename(resolvedRelease);
+  process.env.TRANSLATIONBOT_PROJECT_ROOT = sourceRoot;
+  if (/^[0-9a-f]{40}$/u.test(releaseName)) {
+    process.env.TRANSLATIONBOT_RELEASE = releaseName;
+  }
   const fileSettings = await readLogSettings(path.join(sourceRoot, ".env"));
   const settings = Object.fromEntries(
     [...LOG_SETTING_NAMES].map((name) => [name, process.env[name] ?? fileSettings[name]])
   );
   const serviceLogs = createServiceLogManager(sourceRoot, parseServiceLogOptions(settings));
   installConsoleCapture(serviceLogs);
-  process.chdir(currentRelease);
-  require(path.join(currentRelease, "src", "index.js"));
+  process.chdir(resolvedRelease);
+  require(path.join(resolvedRelease, "src", "index.js"));
 }
 
 if (require.main === module) {

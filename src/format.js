@@ -1,3 +1,5 @@
+const { neutralizeDiscordMentions } = require("./text-protection");
+
 function truncate(value, maxLength) {
   if (value.length <= maxLength) {
     return value;
@@ -25,12 +27,23 @@ function formatNote(value, maxLength = 240) {
   return `\nReview: \`${escapeBackticks(truncate(note, maxLength))}\``;
 }
 
+function providerLabel(value) {
+  if (value === "local-ai") {
+    return "Local AI";
+  }
+  if (value === "local-dictionary") {
+    return "Local dictionary";
+  }
+  return "";
+}
+
 function formatTranslation(result, options = {}) {
   const maxOriginalLength = options.maxOriginalLength || 240;
   const maxTranslationLength = options.maxTranslationLength || 600;
   const maxTranslationsPerMessage = options.maxTranslationsPerMessage || 1;
   const flag = result.flagged ? ":triangular_flag_on_post: " : "";
   const note = formatNote(result.note);
+  const heading = [result.languageLabel, providerLabel(result.provider)].filter(Boolean).join(" • ");
   const original = escapeBackticks(truncate(result.original, maxOriginalLength));
   const translations = result.translations
     .slice(0, maxTranslationsPerMessage)
@@ -38,21 +51,21 @@ function formatTranslation(result, options = {}) {
 
   if (translations.length === 0) {
     const formattedOriginal = original.includes("\n") ? `\n${codeBlock(original)}` : ` \`${original}\``;
-    return `${flag}(${result.languageLabel})${formattedOriginal}${note}`;
+    return `${flag}(${heading})${formattedOriginal}${note}`;
   }
 
   const hasMultiline = original.includes("\n") || translations.some((item) => item.includes("\n"));
   if (hasMultiline) {
-    return `${flag}(${result.languageLabel})\n${codeBlock(original)}\n==\n${codeBlock(translations.join("\n---\n"))}${note}`;
+    return `${flag}(${heading})\n${codeBlock(original)}\n==\n${codeBlock(translations.join("\n---\n"))}${note}`;
   }
 
-  return `${flag}(${result.languageLabel}) \`${original}\` == ${translations.map((item) => `\`${item}\``).join(" / ")}${note}`;
+  return `${flag}(${heading}) \`${original}\` == ${translations.map((item) => `\`${item}\``).join(" / ")}${note}`;
 }
 
 module.exports = {
   escapeBackticks,
   formatNote,
   formatTranslation,
+  providerLabel,
   truncate
 };
-const { neutralizeDiscordMentions } = require("./text-protection");

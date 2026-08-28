@@ -31,6 +31,16 @@ function validateLogArguments(args) {
   }
 }
 
+function validateHealthArguments(args) {
+  const seen = new Set();
+  for (const argument of args) {
+    if (!["--json", "--alert-test"].includes(argument) || seen.has(argument)) {
+      throw new UsageError(`Unknown or repeated health argument: ${argument}`);
+    }
+    seen.add(argument);
+  }
+}
+
 function parseOperation(command, args) {
   if (["install", "ollama-status", "restart", "start", "status", "stop"].includes(command)) {
     if (args.length > 0) {
@@ -48,6 +58,10 @@ function parseOperation(command, args) {
     validateLogArguments(args);
     return { script: "operations", args: ["logs", ...args] };
   }
+  if (command === "health") {
+    validateHealthArguments(args);
+    return { script: "operations", args: ["health", ...args] };
+  }
   if (command === "deploy") {
     if (args.length > 1 || (args.length === 1 && args[0] !== "--rollback")) {
       throw new UsageError("deploy accepts only the optional --rollback argument.");
@@ -55,7 +69,7 @@ function parseOperation(command, args) {
     return { script: "deploy", args };
   }
   throw new UsageError(
-    "Usage: remote <deploy [--rollback]|install|logs [--lines N] [--follow]|ollama-status|restart|start|status|stop|update>"
+    "Usage: remote <deploy [--rollback]|health [--json] [--alert-test]|install|logs [--lines N] [--follow]|ollama-status|restart|start|status|stop|update>"
   );
 }
 
@@ -214,5 +228,6 @@ module.exports = {
   parseOperation,
   shellQuote,
   validateAbsolutePath,
+  validateHealthArguments,
   validateHost
 };

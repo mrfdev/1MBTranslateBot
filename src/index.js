@@ -1,8 +1,11 @@
 const { Client, Events, GatewayIntentBits, PermissionsBitField } = require("discord.js");
+const path = require("node:path");
+const packageJson = require("../package.json");
 const { loadConfig } = require("./config");
 const { ConversationContextStore } = require("./context");
 const { extractBookTexts, extractSignTexts, extractTranslatableEntries } = require("./extract");
 const { formatTranslation: formatTranslationResult } = require("./format");
+const { buildHealthSnapshot, writeHealthSnapshot } = require("./health");
 const { BoundedExecutor, OllamaTranslateClient } = require("./ollama-translator");
 const { TranslationService, safeErrorCode } = require("./translation-service");
 const { LibreTranslateClient } = require("./translator");
@@ -66,6 +69,59 @@ const messageQueue = new BoundedExecutor({
   maxConcurrency: config.messageMaxConcurrency,
   queueLimit: config.messageQueueLimit
 });
+const serviceStartedAt = new Date();
+const serviceProjectRoot = path.resolve(
+  process.env.TRANSLATIONBOT_PROJECT_ROOT || path.resolve(__dirname, "..")
+);
+const healthState = {
+  lifecycle: "starting",
+  discord: {
+    gateway: "connecting",
+    server: "unknown",
+    channels: {
+      message_log: "unknown",
+      sign_log: config.signChannelId ? "unknown" : "not-configured",
+      book_log: config.bookChannelId ? "unknown" : "not-configured"
+    },
+    gateway_errors: 0
+  },
+  backend: {
+    ollama_service_available: null,
+    ollama_model_available: null,
+    legacy_available: null,
+    checked_at: null
+  }
+};
+let healthWriteFailures = 0;
+
+function publishHealthSnapshot() {
+  try {
+    const translationMetrics = translationService.metricsSnapshot();
+    const snapshot = buildHealthSnapshot({
+      version: packageJson.version,
+      release: process.env.TRANSLATIONBOT_RELEASE,
+      startedAt: serviceStartedAt,
+      heartbeatIntervalMs: config.healthSnapshotIntervalMs,
+      lifecycle: healthState.lifecycle,
+      discord: healthState.discord,
+      translationMode: config.translationMode,
+      backend: healthState.backend,
+      translationMetrics,
+      legacyMetrics: legacy?.metricsSnapshot?.() || null,
+      messageQueue: messageQueue.snapshot(),
+      context: conversationContext.snapshot(),
+      cacheMaxEntries: config.translationCacheMaxEntries,
+      cacheTtlMs: config.translationCacheTtlMs
+    });
+    writeHealthSnapshot(serviceProjectRoot, snapshot);
+    healthWriteFailures = 0;
+  } catch {
+    healthWriteFailures += 1;
+    if (healthWriteFailures === 1) {
+      console.error("[translate-bot] Health snapshot write failed.");
+    }
+  }
+}
 
 const client = new Client({
   intents: [
@@ -240,17 +296,23 @@ async function handleMessage(message) {
 async function logChannelAccess(readyClient, label, channelId) {
   if (!channelId) {
     console.log(`[translate-bot] ${label}: not configured`);
-    return;
+    return "not-configured";
   }
   let channel;
   try {
     channel = await readyClient.channels.fetch(channelId);
   } catch {
     console.error(`[translate-bot] ${label}: unavailable`);
-    return;
+    return "unavailable";
   }
 
-  const permissions = channel.permissionsFor(readyClient.user.id);
+  let permissions;
+  try {
+    permissions = channel.permissionsFor(readyClient.user.id);
+  } catch {
+    console.error(`[translate-bot] ${label}: unavailable`);
+    return "unavailable";
+  }
   const checks = [
     ["view", PermissionsBitField.Flags.ViewChannel],
     ["send", PermissionsBitField.Flags.SendMessages],
@@ -260,10 +322,14 @@ async function logChannelAccess(readyClient, label, channelId) {
     .map(([name, permission]) => `${name}=${permissions?.has(permission) ? "yes" : "no"}`)
     .join(", ");
   console.log(`[translate-bot] ${label}: available (${summary})`);
+  return checks.every(([, permission]) => permissions?.has(permission))
+    ? "available"
+    : "insufficient-permissions";
 }
 
 async function logRuntimeAccess(readyClient) {
   console.log("[translate-bot] Discord login: ready");
+  healthState.discord.gateway = "ready";
   let guild;
   try {
     guild =
@@ -271,29 +337,73 @@ async function logRuntimeAccess(readyClient) {
       (await readyClient.guilds.fetch(config.guildId));
   } catch {
     console.error("[translate-bot] Configured Discord server: unavailable");
+    healthState.discord.server = "unavailable";
+    healthState.discord.channels.message_log = "unavailable";
+    healthState.discord.channels.sign_log = config.signChannelId
+      ? "unavailable"
+      : "not-configured";
+    healthState.discord.channels.book_log = config.bookChannelId
+      ? "unavailable"
+      : "not-configured";
+    publishHealthSnapshot();
     return;
   }
   console.log("[translate-bot] Configured Discord server: available");
-  await logChannelAccess(readyClient, "message log channel", config.logChannelId);
-  await logChannelAccess(readyClient, "sign log channel", config.signChannelId);
-  await logChannelAccess(readyClient, "book log channel", config.bookChannelId);
+  healthState.discord.server = "available";
+  healthState.discord.channels.message_log = await logChannelAccess(
+    readyClient,
+    "message log channel",
+    config.logChannelId
+  );
+  healthState.discord.channels.sign_log = await logChannelAccess(
+    readyClient,
+    "sign log channel",
+    config.signChannelId
+  );
+  healthState.discord.channels.book_log = await logChannelAccess(
+    readyClient,
+    "book log channel",
+    config.bookChannelId
+  );
+  publishHealthSnapshot();
   void guild;
 }
 
-async function logTranslationBackendAccess() {
-  if (ollama) {
-    const health = await ollama.healthCheck();
-    console.log(
-      `[translate-bot] Ollama service: ${health.serviceAvailable ? "available" : "unavailable"}`
-    );
-    console.log(
-      `[translate-bot] Configured Ollama model: ${health.modelAvailable ? "available" : "unavailable"}`
-    );
+let backendRefreshPromise = null;
+
+function refreshTranslationBackend({ announce = false } = {}) {
+  if (backendRefreshPromise) {
+    return backendRefreshPromise;
   }
-  if (legacy) {
-    const health = await legacy.healthCheck();
-    console.log(`[translate-bot] Legacy local translator: ${health.ok ? "available" : "unavailable"}`);
-  }
+  backendRefreshPromise = (async () => {
+    const [ollamaHealth, legacyHealth] = await Promise.all([
+      ollama ? ollama.healthCheck() : null,
+      legacy ? legacy.healthCheck() : null
+    ]);
+    healthState.backend = {
+      ollama_service_available: ollamaHealth?.serviceAvailable ?? null,
+      ollama_model_available: ollamaHealth?.modelAvailable ?? null,
+      legacy_available: legacyHealth?.ok ?? null,
+      checked_at: new Date().toISOString()
+    };
+    if (announce && ollamaHealth) {
+      console.log(
+        `[translate-bot] Ollama service: ${ollamaHealth.serviceAvailable ? "available" : "unavailable"}`
+      );
+      console.log(
+        `[translate-bot] Configured Ollama model: ${ollamaHealth.modelAvailable ? "available" : "unavailable"}`
+      );
+    }
+    if (announce && legacyHealth) {
+      console.log(
+        `[translate-bot] Legacy local translator: ${legacyHealth.ok ? "available" : "unavailable"}`
+      );
+    }
+    publishHealthSnapshot();
+  })().finally(() => {
+    backendRefreshPromise = null;
+  });
+  return backendRefreshPromise;
 }
 
 function logTranslationConfig() {
@@ -313,8 +423,7 @@ function logPrivacyMetrics() {
 }
 
 client.once(Events.ClientReady, (readyClient) => {
-  void logRuntimeAccess(readyClient);
-  void logTranslationBackendAccess();
+  healthState.lifecycle = "running";
   logTranslationConfig();
   console.log(
     `[translate-bot] Risk flagging: ${config.enableRiskFlag ? "enabled" : "disabled"}`
@@ -322,6 +431,30 @@ client.once(Events.ClientReady, (readyClient) => {
   if (config.sourceBotIds.size === 0) {
     console.log("[translate-bot] SOURCE_BOT_IDS is empty; all eligible bots/webhooks are watched.");
   }
+  void (async () => {
+    await logRuntimeAccess(readyClient);
+    await refreshTranslationBackend({ announce: true });
+  })();
+});
+
+client.on(Events.ShardDisconnect, () => {
+  healthState.discord.gateway = "disconnected";
+  publishHealthSnapshot();
+});
+
+client.on(Events.ShardReconnecting, () => {
+  healthState.discord.gateway = "connecting";
+  publishHealthSnapshot();
+});
+
+client.on(Events.ShardReady, () => {
+  healthState.discord.gateway = "ready";
+  publishHealthSnapshot();
+});
+
+client.on(Events.Error, () => {
+  healthState.discord.gateway_errors += 1;
+  publishHealthSnapshot();
 });
 
 client.on(Events.MessageCreate, (message) => {
@@ -338,10 +471,19 @@ if (config.metricsIntervalMs > 0) {
   metricsTimer.unref?.();
 }
 
+const healthTimer = setInterval(() => {
+  void refreshTranslationBackend();
+}, config.healthSnapshotIntervalMs);
+healthTimer.unref?.();
+publishHealthSnapshot();
+
 function shutdown() {
   if (metricsTimer) {
     clearInterval(metricsTimer);
   }
+  clearInterval(healthTimer);
+  healthState.lifecycle = "stopping";
+  publishHealthSnapshot();
   logPrivacyMetrics();
   console.log("[translate-bot] Shutting down.");
   client.destroy();
@@ -351,6 +493,9 @@ process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
 void client.login(config.discordToken).catch(() => {
+  healthState.lifecycle = "failed";
+  healthState.discord.gateway = "unavailable";
+  publishHealthSnapshot();
   console.error("[translate-bot] Discord login failed.");
   process.exitCode = 1;
 });

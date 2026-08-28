@@ -71,6 +71,13 @@ class ConversationContextStore {
     this.conversations.set(key, next);
   }
 
+  snapshot() {
+    return {
+      conversations: this.conversations.size,
+      peer_routes: this.lastPeers.size
+    };
+  }
+
   resolveConversationKey(entry) {
     const actor = normalizeParticipant(entry?.actor);
     let recipient = normalizeParticipant(entry?.recipient);

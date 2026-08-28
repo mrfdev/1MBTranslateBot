@@ -137,6 +137,24 @@ test("accepts natural translations from several languages and mixed language", a
   }
 });
 
+test("accepts an exact model-rendered multiline layout when newline markers are omitted", async () => {
+  const translateClient = client({
+    fetchImpl: async () =>
+      ollamaResponse(
+        modelDecision({
+          decision: "translate",
+          source_language: "fr",
+          confidence: 0.97,
+          translation: "hello here\ni can speak\nwith my friends",
+          reason_code: "foreign"
+        })
+      )
+  });
+  const result = await translateClient.analyze("bonjour ici\nje peux parler\navec mes amis");
+  assert.equal(result.translation, "hello here\ni can speak\nwith my friends");
+  assert.equal(result.source_language, "fr");
+});
+
 test("requires the exact schema and response envelope", async () => {
   const invalidCases = [
     modelDecision({ extra: true }),

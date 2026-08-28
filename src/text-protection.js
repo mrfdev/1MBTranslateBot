@@ -139,15 +139,35 @@ function countOccurrences(text, needle) {
   return text.split(needle).length - 1;
 }
 
+function normalizeExpectedLineBreaks(value, protection) {
+  const translated = String(value ?? "");
+  const rawBreaks = translated.match(/\r\n|\r|\n/gu) || [];
+  if (rawBreaks.length === 0) {
+    return translated;
+  }
+
+  const lineBreakTokens = protection.tokens.filter((token) => /\r|\n/u.test(token.value));
+  const canRestoreExactly =
+    rawBreaks.length === lineBreakTokens.length &&
+    lineBreakTokens.every(
+      (token) =>
+        /^(?:\r\n|\r|\n)$/u.test(token.value) &&
+        countOccurrences(translated, token.marker) === 0
+    );
+  if (!canRestoreExactly) {
+    throw new TextProtectionError("line-break-mismatch");
+  }
+
+  let index = 0;
+  return translated.replace(/\r\n|\r|\n/gu, () => lineBreakTokens[index++].marker);
+}
+
 function restoreProtectedText(value, protection, options = {}) {
-  let translated = String(value ?? "");
+  let translated = normalizeExpectedLineBreaks(value, protection);
   const maxOutputChars = Math.max(1, Number(options.maxOutputChars) || 1_200);
 
   if (!translated || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(translated)) {
     throw new TextProtectionError("unsafe-output");
-  }
-  if (translated.includes("\r") || translated.includes("\n")) {
-    throw new TextProtectionError("line-break-mismatch");
   }
   if (UNSAFE_GENERATED_PATTERN.test(translated)) {
     throw new TextProtectionError("formatting-injection");
@@ -263,6 +283,7 @@ function neutralizeDiscordMentions(value) {
 module.exports = {
   TextProtectionError,
   neutralizeDiscordMentions,
+  normalizeExpectedLineBreaks,
   protectText,
   restoreProtectedText
 };

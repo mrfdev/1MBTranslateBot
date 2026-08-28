@@ -240,7 +240,14 @@ function loadConfig(env = process.env) {
       32,
       true
     ),
-    messageQueueLimit: numberValue(env.MESSAGE_QUEUE_LIMIT, 100, 0, 10_000, true)
+    messageQueueLimit: numberValue(env.MESSAGE_QUEUE_LIMIT, 100, 0, 10_000, true),
+    healthSnapshotIntervalMs: numberValue(
+      env.HEALTH_SNAPSHOT_INTERVAL_MS,
+      30_000,
+      5_000,
+      300_000,
+      true
+    )
   };
 }
 

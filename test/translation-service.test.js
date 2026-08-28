@@ -82,6 +82,7 @@ test("accepts Dutch and other foreign translations only at or above the threshol
     kind: "direct-message"
   });
   assert.deepEqual(acceptedResult.translations, ["Can you help me with my shop?"]);
+  assert.equal(acceptedResult.provider, "local-ai");
 
   const rejected = activeService({
     analyze: async () => decision({ confidence: 0.899 }),
@@ -201,6 +202,7 @@ test("off mode preserves the explicit local legacy path", async () => {
     kind: "direct-message"
   });
   assert.deepEqual(result.translations, ["Can you help me?"]);
+  assert.equal(result.provider, "local-dictionary");
   assert.equal(detected, 1);
   assert.equal(translated, 1);
 });
@@ -236,6 +238,7 @@ test("shadow mode returns legacy output without waiting for or applying Ollama",
     kind: "direct-message"
   });
   assert.deepEqual(visible.translations, ["Visible legacy output"]);
+  assert.equal(visible.provider, "local-dictionary");
   assert.equal(ollamaCalls, 1);
   release();
   await service.drainShadow();

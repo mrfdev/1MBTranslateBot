@@ -73,4 +73,24 @@ test("requires Discord identifiers instead of embedding private defaults", () =>
   assert.equal(config.logChannelId, "logs");
   assert.equal(config.signChannelId, "");
   assert.equal(config.bookChannelId, "");
+  assert.equal(config.healthSnapshotIntervalMs, 30_000);
+  assert.equal(
+    loadConfig({
+      DISCORD_TOKEN: "test-token",
+      DISCORD_GUILD_ID: "guild",
+      LOG_CHANNEL_ID: "logs",
+      HEALTH_SNAPSHOT_INTERVAL_MS: "5000"
+    }).healthSnapshotIntervalMs,
+    5_000
+  );
+  assert.throws(
+    () =>
+      loadConfig({
+        DISCORD_TOKEN: "test-token",
+        DISCORD_GUILD_ID: "guild",
+        LOG_CHANNEL_ID: "logs",
+        HEALTH_SNAPSHOT_INTERVAL_MS: "4999"
+      }),
+    /invalid-number-environment-value/u
+  );
 });

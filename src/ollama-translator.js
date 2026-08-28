@@ -362,6 +362,15 @@ class BoundedExecutor {
       this.start(queued.task).then(queued.resolve, queued.reject);
     }
   }
+
+  snapshot() {
+    return {
+      active: this.active,
+      queued: this.queue.length,
+      max_concurrency: this.maxConcurrency,
+      queue_limit: this.queueLimit
+    };
+  }
 }
 
 function createMetrics() {
@@ -452,8 +461,14 @@ class OllamaTranslateClient {
       ? Math.round(snapshot.latency_ms_total / snapshot.requests)
       : 0;
     snapshot.cache_entries = this.cache.size;
+    snapshot.cache_capacity = this.cache.maxEntries;
+    snapshot.cache_ttl_ms = this.cache.ttlMs;
     snapshot.inflight = this.inflight.size;
-    snapshot.queued = this.executor.queue.length;
+    Object.assign(snapshot, this.executor.snapshot());
+    const now = this.now();
+    snapshot.circuit_state = this.circuitOpenUntil > now ? "open" : "closed";
+    snapshot.circuit_retry_in_ms = Math.max(0, this.circuitOpenUntil - now);
+    snapshot.consecutive_failures = this.consecutiveFailures;
     delete snapshot.latency_ms_total;
     return snapshot;
   }

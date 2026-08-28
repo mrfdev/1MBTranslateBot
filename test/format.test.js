@@ -7,12 +7,13 @@ test("formats multiline sign translations as code blocks", () => {
     original: "je suis ici\nmais je peux\nparler un\npetit francais",
     translations: ["i'm here.\nbut i can't.\nspeak one\nsmall french"],
     languageLabel: "French",
+    provider: "local-ai",
     flagged: false
   });
 
   assert.equal(
     output,
-    "(French)\n```text\nje suis ici\nmais je peux\nparler un\npetit francais\n```\n==\n```text\ni'm here.\nbut i can't.\nspeak one\nsmall french\n```"
+    "(French • Local AI)\n```text\nje suis ici\nmais je peux\nparler un\npetit francais\n```\n==\n```text\ni'm here.\nbut i can't.\nspeak one\nsmall french\n```"
   );
 });
 
@@ -21,13 +22,14 @@ test("includes and sanitizes a review reason with a translation", () => {
     original: "ik maak je dood",
     translations: ["I will kill you"],
     languageLabel: "Dutch",
+    provider: "local-dictionary",
     flagged: true,
     note: "credible `threat`\nagainst another player"
   });
 
   assert.equal(
     output,
-    ":triangular_flag_on_post: (Dutch) `ik maak je dood` == `I will kill you`\nReview: `credible 'threat' against another player`"
+    ":triangular_flag_on_post: (Dutch • Local dictionary) `ik maak je dood` == `I will kill you`\nReview: `credible 'threat' against another player`"
   );
 });
 

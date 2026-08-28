@@ -5,6 +5,11 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { promisify } = require("node:util");
+const {
+  HealthSnapshotError,
+  evaluateHealth,
+  readHealthSnapshot
+} = require("../src/health");
 const { SERVICE_LOG_NAMES } = require("../src/service-log");
 
 const execFileAsync = promisify(execFile);
@@ -251,6 +256,131 @@ function parseLogArguments(args) {
   return { follow, lines };
 }
 
+function parseHealthArguments(args) {
+  const options = { json: false, alertTest: false };
+  for (const argument of args) {
+    if (argument === "--json" && !options.json) {
+      options.json = true;
+      continue;
+    }
+    if (argument === "--alert-test" && !options.alertTest) {
+      options.alertTest = true;
+      continue;
+    }
+    throw new Error(`Unknown or repeated health argument: ${argument}`);
+  }
+  return options;
+}
+
+async function currentReleaseIdentity(environment = process.env) {
+  const root = path.resolve(projectRoot(environment));
+  const current = path.join(root, ".deploy", "current");
+  let target;
+  try {
+    target = await fs.readlink(current);
+  } catch (error) {
+    if (["EINVAL", "ENOENT"].includes(error?.code)) {
+      return null;
+    }
+    throw error;
+  }
+  const resolved = path.resolve(path.dirname(current), target);
+  const releasesDirectory = path.join(root, ".deploy", "releases");
+  const release = path.basename(resolved).toLocaleLowerCase();
+  return path.dirname(resolved) === releasesDirectory && /^[0-9a-f]{40}$/u.test(release)
+    ? release
+    : null;
+}
+
+function healthMaxAgeMs(snapshot) {
+  const heartbeat = Number(snapshot?.application?.heartbeat_interval_ms);
+  if (!Number.isFinite(heartbeat)) {
+    return 90_000;
+  }
+  return Math.max(15_000, Math.min(600_000, Math.round(heartbeat * 3)));
+}
+
+function availability(value) {
+  return value === true ? "yes" : value === false ? "no" : "unknown";
+}
+
+function formatUptime(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const days = Math.floor(total / 86_400);
+  const hours = Math.floor((total % 86_400) / 3_600);
+  const minutes = Math.floor((total % 3_600) / 60);
+  return [days ? `${days}d` : "", hours || days ? `${hours}h` : "", `${minutes}m`]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function printHumanHealth(report) {
+  console.log(`TranslationBot health: ${report.status.toLocaleUpperCase()}`);
+  console.log(
+    `Attention required: ${report.attention_required ? `yes (${report.attention.join(", ")})` : "no"}`
+  );
+  console.log(`launchd: ${report.status === "unavailable" ? "stopped" : "running"}`);
+  const snapshot = report.snapshot;
+  if (!snapshot) {
+    console.log("Snapshot: unavailable");
+    return;
+  }
+
+  const release = snapshot.application.release === "development"
+    ? "development"
+    : snapshot.application.release.slice(0, 12);
+  console.log(
+    `Application: v${snapshot.application.version}, release ${release}, uptime ${formatUptime(snapshot.application.uptime_seconds)}`
+  );
+  console.log(
+    `Discord: gateway ${snapshot.discord.gateway}, server ${snapshot.discord.server}, message ${snapshot.discord.channels.message_log}, signs ${snapshot.discord.channels.sign_log}, books ${snapshot.discord.channels.book_log}`
+  );
+  console.log(
+    `Translation: ${snapshot.translation.mode}, Ollama service ${availability(snapshot.translation.backend.ollama_service_available)}, model ${availability(snapshot.translation.backend.ollama_model_available)}, dictionary ${availability(snapshot.translation.backend.legacy_available)}, circuit ${snapshot.translation.circuit.state}`
+  );
+  console.log(
+    `Cache: ${snapshot.translation.cache.entries}/${snapshot.translation.cache.max_entries} entries, ${snapshot.translation.cache.hits} hits, TTL ${snapshot.translation.cache.ttl_ms}ms`
+  );
+  console.log(
+    `Queues: messages ${snapshot.queues.messages.active} active/${snapshot.queues.messages.queued} queued; Ollama ${snapshot.queues.ollama.active} active/${snapshot.queues.ollama.queued} queued/${snapshot.queues.ollama.inflight} inflight`
+  );
+  console.log(
+    `Activity: ${snapshot.translation.activity.translated} translated, ${snapshot.translation.activity.unchanged} unchanged, ${snapshot.translation.activity.failures} failures, ${snapshot.translation.activity.average_latency_ms}ms average provider latency`
+  );
+  console.log(
+    `Context: ${snapshot.context.conversations} conversations, ${snapshot.context.peer_routes} peer routes; memory ${snapshot.application.rss_mb}MB; snapshot age ${report.snapshot_age_seconds}s`
+  );
+}
+
+async function reportHealth(args = [], environment = process.env) {
+  const options = parseHealthArguments(args);
+  const job = parseJobState(await readLaunchdJob(environment));
+  let snapshot = null;
+  let snapshotError = null;
+  try {
+    snapshot = readHealthSnapshot(projectRoot(environment));
+  } catch (error) {
+    if (!(error instanceof HealthSnapshotError)) {
+      throw error;
+    }
+    snapshotError = error;
+  }
+  const report = evaluateHealth({
+    snapshot,
+    snapshotError,
+    jobRunning: job.state === "running" && Boolean(job.pid),
+    expectedRelease: await currentReleaseIdentity(environment),
+    maxAgeMs: healthMaxAgeMs(snapshot),
+    alertTest: options.alertTest
+  });
+  if (options.json) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    printHumanHealth(report);
+  }
+  return report;
+}
+
 async function runWithInheritedOutput(command, args, environment = process.env, cwd) {
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "inherit", env: environment, cwd });
@@ -304,11 +434,14 @@ async function reportOllamaStatus(environment = process.env) {
 
 async function main(args = process.argv.slice(2), environment = process.env) {
   const [command, ...rest] = args;
-  if (command !== "logs" && rest.length > 0) {
+  if (!["logs", "health"].includes(command) && rest.length > 0) {
     throw new Error(`${command || "operation"} does not accept arguments.`);
   }
   if (command === "status") {
     await reportStatus(environment);
+  } else if (command === "health") {
+    const report = await reportHealth(rest, environment);
+    process.exitCode = report.exit_code;
   } else if (command === "ollama-status") {
     await reportOllamaStatus(environment);
   } else if (command === "start") {
@@ -323,7 +456,7 @@ async function main(args = process.argv.slice(2), environment = process.env) {
     await installServiceDefinition({ environment });
   } else {
     throw new Error(
-      "Usage: translationbot-ops.js <install|logs|ollama-status|restart|start|status|stop>"
+      "Usage: translationbot-ops.js <health [--json] [--alert-test]|install|logs|ollama-status|restart|start|status|stop>"
     );
   }
 }
@@ -342,10 +475,15 @@ module.exports = {
   launchdDomain,
   launchdTarget,
   main,
+  currentReleaseIdentity,
+  healthMaxAgeMs,
   parseJobState,
+  parseHealthArguments,
   parseLogArguments,
+  printHumanHealth,
   projectRoot,
   renderServiceDefinition,
+  reportHealth,
   reportStatus,
   restartService,
   startService,

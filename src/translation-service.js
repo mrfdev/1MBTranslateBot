@@ -290,6 +290,7 @@ class TranslationService {
       translations,
       language: decision.source_language,
       languageLabel: languageName(decision.source_language),
+      provider: "local-ai",
       confidence: decision.confidence,
       flagged:
         this.enableRiskFlag &&
@@ -338,6 +339,7 @@ class TranslationService {
       language: sourceLanguage === "auto" ? detected.language : sourceLanguage,
       languageLabel:
         sourceLanguage === "auto" ? "Unknown" : languageName(sourceLanguage),
+      provider: "local-dictionary",
       confidence: detected.confidence,
       flagged:
         this.enableRiskFlag &&

@@ -30,6 +30,8 @@ For each candidate, the bot:
 
 The client sends `stream:false`, `think:false`, temperature `0`, a fixed seed, and a small output budget through Ollama's [chat API](https://docs.ollama.com/api/chat). It never exposes model reasoning.
 
+Every visible translation identifies its source in the heading. `Local AI` means the active Ollama model produced and passed validation for that translation. `Local dictionary` means the loopback legacy translator produced it in `off` or `shadow` mode. Active mode never silently changes to the dictionary path.
+
 ## Privacy and safety guarantees
 
 - Ollama must use an IPv4 or IPv6 loopback HTTP address. LAN, public, HTTPS, credentialed, path-bearing, and `0.0.0.0` endpoints fail configuration validation.
@@ -142,7 +144,7 @@ Run the optional live integration test only when a loopback Ollama endpoint is r
 RUN_OLLAMA_INTEGRATION=1 npm run test:ollama
 ```
 
-The test uses synthetic Dutch text and verifies model readiness, the conservative threshold, placeholder preservation, and punctuation preservation. It never uses production messages.
+The test uses synthetic Dutch and French text and verifies model readiness, the conservative threshold, placeholder preservation, punctuation preservation, and exact multiline sign layout. It never uses production messages.
 
 ## Synthetic evaluation
 
@@ -193,6 +195,9 @@ Host-local operations are:
 ./scripts/stop
 ./scripts/restart
 ./scripts/status
+./scripts/health
+./scripts/health --json
+./scripts/health --alert-test
 ./scripts/logs --lines 100
 ./scripts/logs --follow
 ./scripts/deploy
@@ -200,6 +205,8 @@ Host-local operations are:
 ```
 
 Service output is captured in owner-only `logs/translationbot-service.log` and `logs/translationbot-service.error.log`. The two streams rotate independently, keep a bounded archive count, and stop accepting writes before the configured free-disk reserve would be consumed. They contain timestamps and privacy-safe operational records, not Discord message text or model responses.
+
+`health` combines launchd state with a fresh owner-only runtime snapshot. It checks the active release and version, Discord gateway/server/channel readiness, configured translation backend, Ollama circuit, caches, queues, context counts, aggregate activity, uptime, and memory. Exit status `0` means healthy, `2` means running but requiring attention, and `3` means unavailable. `--json` provides the same bounded data for monitoring. `--alert-test` deliberately returns attention status `2` with the safe code `alert-test`, without stopping or changing the service, so alert wiring can be tested. The runtime refreshes the snapshot every `HEALTH_SNAPSHOT_INTERVAL_MS` (30 seconds by default).
 
 Deployment is release-based. The deployer exports only the committed Git revision into an ignored staging directory, runs `npm ci` and the complete local check before activation, links the owner-only host `.env` and persistent logs, then atomically switches the active release. It succeeds only after launchd reports a running process and fresh service output confirms Discord plus the configured local translation backend are available. Failed activation restores and verifies the preceding release; explicit rollback swaps the last two verified releases.
 
@@ -214,6 +221,9 @@ Fill in the SSH destination and absolute remote Node/project paths, then use the
 
 ```bash
 ./scripts/remote status
+./scripts/remote health
+./scripts/remote health --json
+./scripts/remote health --alert-test
 ./scripts/remote ollama-status
 ./scripts/remote start
 ./scripts/remote stop

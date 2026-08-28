@@ -127,6 +127,14 @@ class LibreTranslateClient {
     }
   }
 
+  metricsSnapshot() {
+    return {
+      cache_entries: this.cache.size,
+      cache_capacity: this.cache.maxEntries,
+      cache_ttl_ms: this.cache.ttlMs
+    };
+  }
+
   async detect(text) {
     const key = cacheKey("detect", text);
     const cached = this.cache.get(key);
