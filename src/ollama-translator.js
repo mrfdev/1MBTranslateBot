@@ -6,10 +6,15 @@ const {
   restoreProtectedText
 } = require("./text-protection");
 
-const PROMPT_VERSION = "translation-gate-v2";
+const PROMPT_VERSION = "translation-gate-v3";
 const LOCAL_HOSTS = new Set(["127.0.0.1", "[::1]"]);
 const MODEL_NAME_PATTERN = /^[a-z0-9][a-z0-9._/-]*(?::[a-z0-9][a-z0-9._-]*)?$/iu;
 const DECISIONS = new Set(["translate", "leave_unchanged", "uncertain"]);
+const REPAIRABLE_VALIDATION_CODES = new Set([
+  "line-break-mismatch",
+  "protected-token-mismatch",
+  "unchanged-translation"
+]);
 const REASON_CODES = new Set([
   "foreign",
   "english",
@@ -201,6 +206,43 @@ function buildSystemPrompt(targetLanguage) {
   ].join("\n");
 }
 
+function buildRepairPrompt(targetLanguage, code) {
+  const base = buildSystemPrompt(targetLanguage);
+  const target = targetLanguage === "en" ? "ordinary natural English" : targetLanguage;
+  const instruction =
+    code === "unchanged-translation"
+      ? [
+          "VALIDATION RETRY: The prior response chose translate for non-English text but copied the source unchanged.",
+          `Return its intended meaning in ${target}.`,
+          "Resolve obvious misspellings and mixed-language grammar before translating.",
+          "Do not preserve a foreign phrase merely because a target-language reader might recognize it.",
+          "If the meaning truly cannot be translated, choose uncertain with null translation."
+        ].join(" ")
+      : [
+          "VALIDATION RETRY: The prior response dropped or misplaced protected layout data.",
+          "Return a corrected result and copy every [[KEEP_...]] marker exactly once and in order.",
+          "Keep each marker at the same semantic boundary so the exact line layout is preserved."
+        ].join(" ");
+  return `${base}\n${instruction}`;
+}
+
+function shouldRepairValidation(error, structured, targetLanguage, minimumConfidence) {
+  const sourceLanguage = String(structured?.source_language || "");
+  const sourcePrimary = sourceLanguage.split("-")[0];
+  const targetPrimary = String(targetLanguage || "").split("-")[0];
+  return (
+    error instanceof OllamaError &&
+    REPAIRABLE_VALIDATION_CODES.has(error.code) &&
+    structured?.decision === "translate" &&
+    ["foreign", "mixed"].includes(structured.reason_code) &&
+    typeof structured.source_language === "string" &&
+    !["und", targetPrimary].includes(sourcePrimary) &&
+    typeof structured.confidence === "number" &&
+    structured.confidence >= minimumConfidence &&
+    typeof structured.translation === "string"
+  );
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -376,6 +418,9 @@ class BoundedExecutor {
 function createMetrics() {
   return {
     requests: 0,
+    repair_attempts: 0,
+    repair_successes: 0,
+    repair_failures: 0,
     cache_hits: 0,
     deduplicated: 0,
     queue_rejected: 0,
@@ -402,6 +447,10 @@ class OllamaTranslateClient {
     this.maxInputChars = boundedInteger(options.maxInputChars, 1, 20_000, 1_200);
     this.maxOutputChars = boundedInteger(options.maxOutputChars, 1, 20_000, 1_200);
     this.maxOutputTokens = boundedInteger(options.maxOutputTokens, 32, 2_048, 256);
+    const repairMinimumConfidence = Number(options.repairMinimumConfidence);
+    this.repairMinimumConfidence = Number.isFinite(repairMinimumConfidence)
+      ? Math.max(0, Math.min(1, repairMinimumConfidence))
+      : 0.9;
     this.maxResponseBytes = boundedInteger(
       options.maxResponseBytes,
       128,
@@ -606,58 +655,42 @@ class OllamaTranslateClient {
     const startedAt = this.monotonicNow();
     const timeout = createTimeoutSignal(this.timeoutMs);
     try {
-      const response = await this.fetch(`${this.baseUrl}/api/chat`, {
-        method: "POST",
-        redirect: "error",
-        signal: timeout.signal,
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          model: this.model,
-          stream: false,
-          think: false,
-          keep_alive: this.keepAlive,
-          format: DECISION_SCHEMA,
-          options: { temperature: 0, seed: 0, num_predict: this.maxOutputTokens },
-          messages: [
-            { role: "system", content: buildSystemPrompt(this.targetLanguage) },
-            {
-              role: "user",
-              content: JSON.stringify({
-                DATA: {
-                  context,
-                  current_kind: kind,
-                  current_text: protection.text
-                }
-              })
-            }
-          ]
-        })
+      let structured = await this.requestStructuredDecision({
+        kind,
+        protection,
+        context,
+        signal: timeout.signal
       });
-      if (!response.ok) {
-        await response.body?.cancel?.().catch(() => {});
-        throw new OllamaError(response.status === 404 ? "model-missing" : "service-unavailable");
-      }
-
-      const body = await readBoundedJson(response, this.maxResponseBytes);
-      if (
-        body.done !== true ||
-        body.model !== this.model ||
-        typeof body.message?.content !== "string" ||
-        body.message.tool_calls?.length
-      ) {
-        throw new OllamaError("invalid-response");
-      }
-
-      let structured;
+      let result;
       try {
-        structured = JSON.parse(body.message.content);
-      } catch {
-        throw new OllamaError("invalid-decision-json");
+        result = validateDecision(structured, protection, this.maxOutputChars);
+      } catch (error) {
+        if (
+          !shouldRepairValidation(
+            error,
+            structured,
+            this.targetLanguage,
+            this.repairMinimumConfidence
+          )
+        ) {
+          throw error;
+        }
+        this.metrics.repair_attempts += 1;
+        try {
+          structured = await this.requestStructuredDecision({
+            kind,
+            protection,
+            context,
+            signal: timeout.signal,
+            repairCode: error.code
+          });
+          result = validateDecision(structured, protection, this.maxOutputChars);
+          this.metrics.repair_successes += 1;
+        } catch (repairError) {
+          this.metrics.repair_failures += 1;
+          throw repairError;
+        }
       }
-      const result = validateDecision(structured, protection, this.maxOutputChars);
       if (
         result.decision !== structured.decision ||
         result.reason_code !== structured.reason_code ||
@@ -678,6 +711,64 @@ class OllamaTranslateClient {
     } finally {
       this.metrics.latency_ms_total += Math.max(0, this.monotonicNow() - startedAt);
       timeout.clear();
+    }
+  }
+
+  async requestStructuredDecision({ kind, protection, context, signal, repairCode = null }) {
+    const response = await this.fetch(`${this.baseUrl}/api/chat`, {
+      method: "POST",
+      redirect: "error",
+      signal,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: this.model,
+        stream: false,
+        think: false,
+        keep_alive: this.keepAlive,
+        format: DECISION_SCHEMA,
+        options: { temperature: 0, seed: 0, num_predict: this.maxOutputTokens },
+        messages: [
+          {
+            role: "system",
+            content: repairCode
+              ? buildRepairPrompt(this.targetLanguage, repairCode)
+              : buildSystemPrompt(this.targetLanguage)
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              DATA: {
+                context,
+                current_kind: kind,
+                current_text: protection.text
+              }
+            })
+          }
+        ]
+      })
+    });
+    if (!response.ok) {
+      await response.body?.cancel?.().catch(() => {});
+      throw new OllamaError(response.status === 404 ? "model-missing" : "service-unavailable");
+    }
+
+    const body = await readBoundedJson(response, this.maxResponseBytes);
+    if (
+      body.done !== true ||
+      body.model !== this.model ||
+      typeof body.message?.content !== "string" ||
+      body.message.tool_calls?.length
+    ) {
+      throw new OllamaError("invalid-response");
+    }
+
+    try {
+      return JSON.parse(body.message.content);
+    } catch {
+      throw new OllamaError("invalid-decision-json");
     }
   }
 }

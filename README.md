@@ -26,7 +26,8 @@ For each candidate, the bot:
    ```
 
 5. Validates the Ollama response envelope, exact configured model, fields, types, enums, cross-field meaning, size, formatting tokens, line structure, and output safety.
-6. Shows a translation only for a valid `translate` decision at or above `OLLAMA_MIN_CONFIDENCE` (default `0.90`).
+6. Gives one bounded second attempt to a confident non-English translation only when it dropped protected line/layout markers or copied the source unchanged. The retry stays inside the original timeout and must pass the same strict validation.
+7. Shows a translation only for a valid `translate` decision at or above `OLLAMA_MIN_CONFIDENCE` (default `0.90`).
 
 The client sends `stream:false`, `think:false`, temperature `0`, a fixed seed, and a small output budget through Ollama's [chat API](https://docs.ollama.com/api/chat). It never exposes model reasoning.
 
@@ -118,7 +119,7 @@ Runtime protection defaults:
 - simultaneous normalized requests share one in-flight model call
 - Discord message processing has its own bounded queue
 
-A timeout, queue rejection, open circuit, connection error, missing model, invalid JSON/schema, wrong model identity, unsafe output, or low-confidence/uncertain decision produces no translation. Active mode never invokes the legacy provider as a fallback.
+A timeout, queue rejection, open circuit, connection error, missing model, invalid JSON/schema, wrong model identity, unsafe output, low-confidence/uncertain decision, or failed repair produces no translation. Unsafe formatting and low-confidence output are never retried. Active mode never invokes the legacy provider as a fallback.
 
 ## Testing
 

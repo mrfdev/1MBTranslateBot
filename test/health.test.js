@@ -47,6 +47,9 @@ function healthyInput(overrides = {}) {
       ollama: {
         requests: 9,
         errors: 0,
+        repair_attempts: 2,
+        repair_successes: 2,
+        repair_failures: 0,
         cache_hits: 3,
         cache_entries: 4,
         cache_capacity: 100,
@@ -85,6 +88,7 @@ test("builds a healthy privacy-safe runtime snapshot", () => {
   assert.equal(snapshot.application.uptime_seconds, 300);
   assert.equal(snapshot.translation.cache.entries, 4);
   assert.equal(snapshot.translation.activity.translated, 8);
+  assert.equal(snapshot.translation.activity.repair_successes, 2);
   const serialized = JSON.stringify(snapshot);
   assert.doesNotMatch(serialized, /123456789012345678/u);
   assert.doesNotMatch(serialized, /do-not-publish/u);

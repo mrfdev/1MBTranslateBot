@@ -155,6 +155,154 @@ test("accepts an exact model-rendered multiline layout when newline markers are 
   assert.equal(result.source_language, "fr");
 });
 
+test("retries one confident translation that drops a protected line marker", async () => {
+  let calls = 0;
+  const translateClient = client({
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      const request = JSON.parse(options.body);
+      const protectedText = JSON.parse(request.messages[1].content).DATA.current_text;
+      const marker = protectedText.match(/\[\[KEEP_[^\]]+\]\]/u)?.[0];
+      if (calls === 1) {
+        return ollamaResponse(
+          modelDecision({
+            decision: "translate",
+            source_language: "nl",
+            confidence: 0.97,
+            translation: "welcome home with all friends",
+            reason_code: "foreign"
+          })
+        );
+      }
+      assert.match(request.messages[0].content, /validation retry/iu);
+      return ollamaResponse(
+        modelDecision({
+          decision: "translate",
+          source_language: "nl",
+          confidence: 0.97,
+          translation: `welcome home${marker}with all friends`,
+          reason_code: "foreign"
+        })
+      );
+    }
+  });
+
+  const result = await translateClient.analyze("welkom thuis\nmet alle vrienden");
+  assert.equal(result.translation, "welcome home\nwith all friends");
+  assert.equal(calls, 2);
+  assert.equal(translateClient.metricsSnapshot().repair_attempts, 1);
+  assert.equal(translateClient.metricsSnapshot().repair_successes, 1);
+});
+
+test("retries one confident non-English decision that copied its source", async () => {
+  let calls = 0;
+  const original = "merci mon amora";
+  const translateClient = client({
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      const request = JSON.parse(options.body);
+      if (calls === 1) {
+        return ollamaResponse(
+          modelDecision({
+            decision: "translate",
+            source_language: "fr",
+            confidence: 0.97,
+            translation: original,
+            reason_code: "mixed"
+          })
+        );
+      }
+      assert.match(request.messages[0].content, /copied the source/iu);
+      return ollamaResponse(
+        modelDecision({
+          decision: "translate",
+          source_language: "fr",
+          confidence: 0.97,
+          translation: "thank you my love",
+          reason_code: "mixed"
+        })
+      );
+    }
+  });
+
+  const result = await translateClient.analyze(original);
+  assert.equal(result.translation, "thank you my love");
+  assert.equal(calls, 2);
+  assert.equal(translateClient.metricsSnapshot().repair_attempts, 1);
+  assert.equal(translateClient.metricsSnapshot().repair_successes, 1);
+});
+
+test("never retries low-confidence or unsafe generated output", async () => {
+  let lowConfidenceCalls = 0;
+  const lowConfidence = client({
+    fetchImpl: async () => {
+      lowConfidenceCalls += 1;
+      return ollamaResponse(
+        modelDecision({
+          decision: "translate",
+          source_language: "nl",
+          confidence: 0.5,
+          translation: "welcome home with all friends",
+          reason_code: "foreign"
+        })
+      );
+    }
+  });
+  await assert.rejects(
+    lowConfidence.analyze("welkom thuis\nmet alle vrienden"),
+    (error) => error.code === "protected-token-mismatch"
+  );
+  assert.equal(lowConfidenceCalls, 1);
+  assert.equal(lowConfidence.metricsSnapshot().repair_attempts, 0);
+
+  let unsafeCalls = 0;
+  const unsafe = client({
+    fetchImpl: async () => {
+      unsafeCalls += 1;
+      return ollamaResponse(
+        modelDecision({
+          decision: "translate",
+          source_language: "nl",
+          confidence: 0.99,
+          translation: "visit https://untrusted.invalid",
+          reason_code: "foreign"
+        })
+      );
+    }
+  });
+  await assert.rejects(
+    unsafe.analyze("een veilige Nederlandse zin"),
+    (error) => error.code === "formatting-injection"
+  );
+  assert.equal(unsafeCalls, 1);
+  assert.equal(unsafe.metricsSnapshot().repair_attempts, 0);
+});
+
+test("makes at most one repair attempt and fails closed when it is still invalid", async () => {
+  let calls = 0;
+  const translateClient = client({
+    fetchImpl: async () => {
+      calls += 1;
+      return ollamaResponse(
+        modelDecision({
+          decision: "translate",
+          source_language: "nl",
+          confidence: 0.99,
+          translation: "welcome home with all friends",
+          reason_code: "foreign"
+        })
+      );
+    }
+  });
+  await assert.rejects(
+    translateClient.analyze("welkom thuis\nmet alle vrienden"),
+    (error) => error.code === "protected-token-mismatch"
+  );
+  assert.equal(calls, 2);
+  assert.equal(translateClient.metricsSnapshot().repair_attempts, 1);
+  assert.equal(translateClient.metricsSnapshot().repair_failures, 1);
+});
+
 test("requires the exact schema and response envelope", async () => {
   const invalidCases = [
     modelDecision({ extra: true }),

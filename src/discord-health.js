@@ -94,7 +94,7 @@ function formatDiscordHealth(snapshot, { alertTest = false } = {}) {
     `Translation: ${snapshot.translation.mode}, visible provider ${visibleProvider(snapshot.translation.mode)}, Ollama ${availability(snapshot.translation.backend.ollama_service_available)}, model ${availability(snapshot.translation.backend.ollama_model_available)}, circuit ${snapshot.translation.circuit.state}`,
     `Cache: ${snapshot.translation.cache.entries}/${snapshot.translation.cache.max_entries} entries, ${snapshot.translation.cache.hits} hits`,
     `Queues: messages ${snapshot.queues.messages.active}/${snapshot.queues.messages.queued}, Ollama ${snapshot.queues.ollama.active}/${snapshot.queues.ollama.queued}/${snapshot.queues.ollama.inflight}`,
-    `Activity: ${snapshot.translation.activity.translated} translated, ${snapshot.translation.activity.unchanged} unchanged, ${snapshot.translation.activity.failures} failures`
+    `Activity: ${snapshot.translation.activity.translated} translated, ${snapshot.translation.activity.unchanged} unchanged, ${snapshot.translation.activity.failures} failures, repairs ${snapshot.translation.activity.repair_successes}/${snapshot.translation.activity.repair_attempts}`
   );
   return lines.join("\n");
 }

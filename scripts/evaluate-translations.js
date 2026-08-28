@@ -18,6 +18,7 @@ async function main() {
     maxInputChars: config.ollamaMaxInputChars,
     maxOutputChars: config.maxTranslationLength,
     maxOutputTokens: config.ollamaMaxOutputTokens,
+    repairMinimumConfidence: config.ollamaMinConfidence,
     maxResponseBytes: config.ollamaMaxResponseBytes,
     maxConcurrency: config.ollamaMaxConcurrency,
     queueLimit: config.ollamaQueueLimit,

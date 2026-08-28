@@ -144,6 +144,9 @@ function buildHealthSnapshot(input = {}, now = new Date()) {
         failures: finiteInteger(translationMetrics.failures),
         provider_requests: finiteInteger(ollamaMetrics.requests),
         provider_errors: finiteInteger(ollamaMetrics.errors),
+        repair_attempts: finiteInteger(ollamaMetrics.repair_attempts),
+        repair_successes: finiteInteger(ollamaMetrics.repair_successes),
+        repair_failures: finiteInteger(ollamaMetrics.repair_failures),
         average_latency_ms: finiteInteger(ollamaMetrics.average_latency_ms)
       }
     },

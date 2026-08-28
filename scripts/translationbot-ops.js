@@ -345,7 +345,7 @@ function printHumanHealth(report) {
     `Queues: messages ${snapshot.queues.messages.active} active/${snapshot.queues.messages.queued} queued; Ollama ${snapshot.queues.ollama.active} active/${snapshot.queues.ollama.queued} queued/${snapshot.queues.ollama.inflight} inflight`
   );
   console.log(
-    `Activity: ${snapshot.translation.activity.translated} translated, ${snapshot.translation.activity.unchanged} unchanged, ${snapshot.translation.activity.failures} failures, ${snapshot.translation.activity.average_latency_ms}ms average provider latency`
+    `Activity: ${snapshot.translation.activity.translated} translated, ${snapshot.translation.activity.unchanged} unchanged, ${snapshot.translation.activity.failures} failures, repairs ${snapshot.translation.activity.repair_successes}/${snapshot.translation.activity.repair_attempts}, ${snapshot.translation.activity.average_latency_ms}ms average provider latency`
   );
   console.log(
     `Context: ${snapshot.context.conversations} conversations, ${snapshot.context.peer_routes} peer routes; memory ${snapshot.application.rss_mb}MB; snapshot age ${report.snapshot_age_seconds}s`
