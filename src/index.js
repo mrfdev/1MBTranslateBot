@@ -10,10 +10,23 @@ const {
   formatDiscordHealth,
   isHealthCommandInteraction
 } = require("./discord-health");
-const { extractBookTexts, extractSignTexts, extractTranslatableEntries } = require("./extract");
+const {
+  extractBookEntries,
+  extractSignEntries,
+  extractTranslatableEntries
+} = require("./extract");
 const { formatTranslation: formatTranslationResult } = require("./format");
 const { buildHealthSnapshot, writeHealthSnapshot } = require("./health");
+const {
+  MessageWorkBudget,
+  isMessageWorkLimitError,
+  shouldHandleMessage: messagePassesPolicy
+} = require("./message-policy");
 const { BoundedExecutor, OllamaTranslateClient } = require("./ollama-translator");
+const {
+  entryForConversationContext,
+  processEntryWithPlayerPolicy
+} = require("./player-policy");
 const { TranslationService, safeErrorCode } = require("./translation-service");
 const { LibreTranslateClient } = require("./translator");
 
@@ -52,6 +65,8 @@ const legacy =
         alternatives: config.translationAlternatives,
         timeoutMs: config.translationTimeoutMs,
         delayMs: config.translationDelayMs,
+        maxResponseBytes: config.libreTranslateMaxResponseBytes,
+        maxOutputChars: config.maxTranslationLength,
         cacheMaxEntries: config.translationCacheMaxEntries,
         cacheTtlMs: config.translationCacheTtlMs
       });
@@ -146,8 +161,6 @@ const client = new Client({
   ]
 });
 
-const seenSourceIds = new Set();
-
 function watchedChannelIds() {
   return new Set(
     [config.logChannelId, config.signChannelId, config.bookChannelId].filter(Boolean)
@@ -155,40 +168,25 @@ function watchedChannelIds() {
 }
 
 function shouldHandleMessage(message) {
-  if (!message.guildId || message.guildId !== config.guildId) {
-    return false;
-  }
-  if (!watchedChannelIds().has(message.channelId)) {
-    return false;
-  }
-  if (message.author?.id === client.user?.id) {
-    return false;
-  }
-  if (config.sourceBotIds.size > 0) {
-    return config.sourceBotIds.has(message.author?.id);
-  }
-  return Boolean(message.author?.bot || message.webhookId || config.translateHumanMessages);
+  return messagePassesPolicy(message, {
+    guildId: config.guildId,
+    watchedChannelIds: watchedChannelIds(),
+    clientUserId: client.user?.id,
+    sourceBotIds: config.sourceBotIds,
+    sourceWebhookIds: config.sourceWebhookIds,
+    allowAnySource: config.allowAnySource,
+    translateHumanMessages: config.translateHumanMessages
+  });
 }
 
-function extractEntriesForMessage(message) {
+function extractEntriesForMessage(message, budget) {
   if (config.signChannelId && message.channelId === config.signChannelId) {
-    return extractSignTexts(message).map((text) => ({
-      text,
-      kind: "sign",
-      actor: null,
-      recipient: null
-    }));
+    return extractSignEntries(message, budget);
   }
   if (config.bookChannelId && message.channelId === config.bookChannelId) {
-    return extractBookTexts(message).map((text, pageIndex) => ({
-      text,
-      kind: "book-page",
-      pageIndex,
-      actor: null,
-      recipient: null
-    }));
+    return extractBookEntries(message, budget);
   }
-  return extractTranslatableEntries(message);
+  return extractTranslatableEntries(message, budget);
 }
 
 function formatTranslation(result) {
@@ -224,17 +222,33 @@ function chunkOutputs(outputs, maxLength = 1_900) {
   return chunks;
 }
 
-async function sendOutputChunks(message, chunks) {
+async function sendOutputChunks(message, chunks, budget) {
   const [first, ...rest] = chunks;
-  await message.reply({
-    content: first,
-    allowedMentions: { parse: [], repliedUser: false }
-  });
+  try {
+    budget.addSendAttempt();
+    await budget.waitFor(
+      message.reply({
+        content: first,
+        allowedMentions: { parse: [], repliedUser: false }
+      })
+    );
+  } catch (error) {
+    if (isMessageWorkLimitError(error)) {
+      throw error;
+    }
+    budget.addSendAttempt();
+    await budget.waitFor(
+      message.channel.send({ content: first, allowedMentions: { parse: [] } })
+    );
+  }
   for (const chunk of rest) {
-    await message.channel.send({
-      content: chunk,
-      allowedMentions: { parse: [] }
-    });
+    budget.addSendAttempt();
+    await budget.waitFor(
+      message.channel.send({
+        content: chunk,
+        allowedMentions: { parse: [] }
+      })
+    );
   }
 }
 
@@ -242,69 +256,100 @@ async function handleMessage(message) {
   if (!shouldHandleMessage(message)) {
     return;
   }
-  if (
-    config.sourceBotIds.size === 0 &&
-    message.author?.id &&
-    !seenSourceIds.has(message.author.id)
-  ) {
-    seenSourceIds.add(message.author.id);
-    console.log(
-      "[translate-bot] A source bot or webhook was observed. Configure SOURCE_BOT_IDS to narrow the source."
+  const budget = new MessageWorkBudget({
+    maxInspectedChars: config.messageMaxInspectedChars,
+    maxCandidates: config.messageMaxCandidates,
+    maxCandidateChars: config.messageMaxCandidateChars,
+    processingBudgetMs: config.messageProcessingBudgetMs,
+    maxOutputChars: config.messageMaxOutputChars,
+    maxOutputChunks: config.messageMaxOutputChunks
+  });
+
+  try {
+    const entries = extractEntriesForMessage(message, budget);
+    if (entries.length === 0) {
+      return;
+    }
+
+    const outputs = [];
+    const documentContext = [];
+    const conversationTurns = conversationContext.beginTurns(
+      entries.map((entry) =>
+        entryForConversationContext(entry, config.ignoredPlayerNames)
+      )
     );
-  }
-
-  const entries = extractEntriesForMessage(message);
-  if (entries.length === 0) {
-    return;
-  }
-
-  const outputs = [];
-  const documentContext = [];
-  for (const entry of entries) {
-    const priorContext =
-      entry.kind === "book-page"
-        ? documentContext.slice(-config.contextMessageLimit)
-        : conversationContext.contextFor(entry);
-    let result = null;
-    try {
-      result = await translationService.translate(entry, priorContext);
-      if (result) {
-        const pageLabel = entry.kind === "book-page" ? `Page ${entry.pageIndex + 1}\n` : "";
-        outputs.push(`${pageLabel}${formatTranslation(result)}`);
-      }
-    } catch (error) {
-      console.error(
-        `[translate-bot] Translation processing failed (${safeErrorCode(error)}); original text was left unchanged.`
-      );
-    } finally {
-      if (["direct-message", "reply"].includes(entry.kind)) {
-        conversationContext.remember(entry, result);
-      }
-      if (entry.kind === "book-page" && result?.translations?.[0]) {
-        documentContext.push({
-          original: entry.text,
-          translation: result.translations[0],
-          language: result.language,
-          confidence: result.confidence
-        });
-        if (documentContext.length > config.contextMessageLimit) {
-          documentContext.splice(0, documentContext.length - config.contextMessageLimit);
+    for (const [entryIndex, entry] of entries.entries()) {
+      budget.assertActive();
+      const conversationTurn = conversationTurns[entryIndex];
+      const priorContext =
+        entry.kind === "book-page"
+          ? documentContext.slice(-config.contextMessageLimit)
+          : conversationContext.contextForTurn(conversationTurn);
+      let result = null;
+      try {
+        result = await budget.waitFor(
+          processEntryWithPlayerPolicy({
+            entry,
+            context: priorContext,
+            ignoredPlayerNames: config.ignoredPlayerNames,
+            translationService,
+            translationOptions: {
+              signal: budget.signal,
+              trackBackgroundTask: (task) => budget.trackBackground(task)
+            }
+          })
+        );
+        budget.assertActive();
+        if (result) {
+          const pageLabel = entry.kind === "book-page" ? `Page ${entry.pageIndex + 1}\n` : "";
+          const output = `${pageLabel}${formatTranslation(result)}`;
+          budget.addOutput(output);
+          outputs.push(output);
+        }
+      } catch (error) {
+        if (isMessageWorkLimitError(error) || budget.signal.aborted) {
+          result = null;
+          throw error;
+        }
+        console.error(
+          `[translate-bot] Translation processing failed (${safeErrorCode(error)}); original text was left unchanged.`
+        );
+      } finally {
+        if (conversationTurn) {
+          conversationContext.remember(conversationTurn, entry, result);
+        }
+        if (entry.kind === "book-page" && result?.translations?.[0]) {
+          documentContext.push({
+            original: entry.text,
+            translation: result.translations[0],
+            language: result.language,
+            confidence: result.confidence
+          });
+          if (documentContext.length > config.contextMessageLimit) {
+            documentContext.splice(0, documentContext.length - config.contextMessageLimit);
+          }
         }
       }
     }
-  }
 
-  if (outputs.length === 0) {
-    return;
-  }
-  const chunks = chunkOutputs(outputs);
-  try {
-    await sendOutputChunks(message, chunks);
-  } catch {
-    console.error("[translate-bot] Reply failed; retrying as a channel message.");
-    for (const chunk of chunks) {
-      await message.channel.send({ content: chunk, allowedMentions: { parse: [] } });
+    if (outputs.length === 0) {
+      return;
     }
+    const chunks = chunkOutputs(outputs);
+    budget.setOutputChunks(chunks.length);
+    await sendOutputChunks(message, chunks, budget);
+  } catch (error) {
+    if (isMessageWorkLimitError(error) || budget.signal.aborted) {
+      console.error(
+        `[translate-bot] Message work stopped (${error?.code || "message-time-budget"}); remaining content was left unchanged.`
+      );
+      return;
+    }
+    console.error(
+      `[translate-bot] Message processing failed (${safeErrorCode(error)}); content was left unchanged.`
+    );
+  } finally {
+    budget.finish();
   }
 }
 
@@ -459,6 +504,9 @@ function logTranslationConfig() {
   console.log(
     `[translate-bot] In-memory result cache: ${config.translationCacheMaxEntries} entries, ${config.translationCacheTtlMs}ms TTL`
   );
+  console.log(
+    `[translate-bot] Ignored Minecraft players: ${config.ignoredPlayerNames.size}`
+  );
 }
 
 function logPrivacyMetrics() {
@@ -472,8 +520,8 @@ client.once(Events.ClientReady, (readyClient) => {
   console.log(
     `[translate-bot] Risk flagging: ${config.enableRiskFlag ? "enabled" : "disabled"}`
   );
-  if (config.sourceBotIds.size === 0) {
-    console.log("[translate-bot] SOURCE_BOT_IDS is empty; all eligible bots/webhooks are watched.");
+  if (config.allowAnySource) {
+    console.log("[translate-bot] ALLOW_ANY_SOURCE is enabled; all eligible bots/webhooks are watched.");
   }
   void (async () => {
     const guild = await logRuntimeAccess(readyClient);
@@ -505,6 +553,9 @@ client.on(Events.Error, () => {
 });
 
 client.on(Events.MessageCreate, (message) => {
+  if (!shouldHandleMessage(message)) {
+    return;
+  }
   void messageQueue.run(() => handleMessage(message)).catch((error) => {
     console.error(
       `[translate-bot] Message work was rejected (${safeErrorCode(error)}); content was left unchanged.`

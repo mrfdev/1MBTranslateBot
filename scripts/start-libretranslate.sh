@@ -15,14 +15,11 @@ case "$LIBRE_BIND_HOST" in
     ;;
 esac
 
-if [ ! -x "$LIBRE_VENV_DIR/bin/python" ]; then
-  echo "[libretranslate] Creating the local Python environment."
-  python3 -m venv "$LIBRE_VENV_DIR"
+if [ ! -x "$LIBRE_VENV_DIR/bin/libretranslate" ]; then
+  echo "[libretranslate] No pre-provisioned legacy translator was found at $LIBRE_VENV_DIR/bin/libretranslate." >&2
+  echo "[libretranslate] Provision a reviewed, fully locked environment separately; startup never installs packages." >&2
+  exit 2
 fi
-
-echo "[libretranslate] Installing/updating the local legacy translator."
-"$LIBRE_VENV_DIR/bin/python" -m pip install --upgrade pip
-"$LIBRE_VENV_DIR/bin/python" -m pip install --upgrade libretranslate
 
 echo "[libretranslate] Starting on loopback."
 exec "$LIBRE_VENV_DIR/bin/libretranslate" --host "$LIBRE_BIND_HOST" --port "$LIBRE_BIND_PORT"

@@ -67,18 +67,26 @@ test("requires Discord identifiers instead of embedding private defaults", () =>
   const config = loadConfig({
     DISCORD_TOKEN: "test-token",
     DISCORD_GUILD_ID: "guild",
-    LOG_CHANNEL_ID: "logs"
+    LOG_CHANNEL_ID: "logs",
+    SOURCE_BOT_IDS: "trusted-source"
   });
   assert.equal(config.guildId, "guild");
   assert.equal(config.logChannelId, "logs");
   assert.equal(config.signChannelId, "");
   assert.equal(config.bookChannelId, "");
+  assert.deepEqual([...config.sourceBotIds], ["trusted-source"]);
+  assert.deepEqual([...config.ignoredPlayerNames], []);
+  assert.equal(config.allowAnySource, false);
+  assert.equal(config.messageMaxCandidates, 16);
+  assert.equal(config.messageProcessingBudgetMs, 60_000);
+  assert.equal(config.messageMaxOutputChunks, 8);
   assert.equal(config.healthSnapshotIntervalMs, 30_000);
   assert.equal(
     loadConfig({
       DISCORD_TOKEN: "test-token",
       DISCORD_GUILD_ID: "guild",
       LOG_CHANNEL_ID: "logs",
+      SOURCE_BOT_IDS: "trusted-source",
       HEALTH_SNAPSHOT_INTERVAL_MS: "5000"
     }).healthSnapshotIntervalMs,
     5_000
@@ -89,8 +97,34 @@ test("requires Discord identifiers instead of embedding private defaults", () =>
         DISCORD_TOKEN: "test-token",
         DISCORD_GUILD_ID: "guild",
         LOG_CHANNEL_ID: "logs",
+        SOURCE_BOT_IDS: "trusted-source",
         HEALTH_SNAPSHOT_INTERVAL_MS: "4999"
       }),
     /invalid-number-environment-value/u
   );
+});
+
+test("normalizes configured ignored player names for exact matching", () => {
+  const config = loadConfig({
+    DISCORD_TOKEN: "test-token",
+    DISCORD_GUILD_ID: "guild",
+    LOG_CHANNEL_ID: "logs",
+    SOURCE_BOT_IDS: "trusted-source",
+    IGNORED_PLAYER_NAMES: " RegularOne, regularone, SECOND_PLAYER, ,"
+  });
+
+  assert.deepEqual([...config.ignoredPlayerNames], ["regularone", "second_player"]);
+});
+
+test("requires an authenticated or explicitly opted-in message source", () => {
+  const required = {
+    DISCORD_TOKEN: "test-token",
+    DISCORD_GUILD_ID: "guild",
+    LOG_CHANNEL_ID: "logs"
+  };
+  assert.throws(() => loadConfig(required), /missing-trusted-message-source/u);
+  assert.doesNotThrow(() => loadConfig({ ...required, SOURCE_BOT_IDS: "bot-one,bot-two" }));
+  assert.doesNotThrow(() => loadConfig({ ...required, SOURCE_WEBHOOK_IDS: "webhook-one" }));
+  assert.doesNotThrow(() => loadConfig({ ...required, ALLOW_ANY_SOURCE: "true" }));
+  assert.doesNotThrow(() => loadConfig({ ...required, TRANSLATE_HUMAN_MESSAGES: "true" }));
 });

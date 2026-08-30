@@ -1,7 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  extractBookEntries,
+  extractBookEntriesFromParts,
   extractBookTextsFromParts,
+  extractSignEntries,
+  extractSignEntriesFromParts,
   extractTextFromCommand,
   extractSignTextsFromParts,
   extractTranslatableEntries,
@@ -105,6 +109,38 @@ test("keeps actors isolated across plain batched message headers", () => {
   ]);
 });
 
+test("does not leak a detected chat actor into a separate actorless part", () => {
+  const parts = [
+    "Message by `RegularOne`\n`/msg FriendOne hola`\n" +
+      "Message by `OtherPlayer`\n`/msg FriendTwo bonjour`",
+    "`/msg FriendThree guten tag`"
+  ];
+
+  assert.deepEqual(extractTranslatableEntriesFromParts(parts), [
+    {
+      text: "hola",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendOne",
+      actor: "RegularOne"
+    },
+    {
+      text: "bonjour",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendTwo",
+      actor: "OtherPlayer"
+    },
+    {
+      text: "guten tag",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendThree",
+      actor: null
+    }
+  ]);
+});
+
 test("does not let player text spoof a structured message actor", () => {
   const message = {
     content: "",
@@ -181,6 +217,20 @@ test("extracts sign text from sign spy embeds", () => {
   assert.deepEqual(extractSignTextsFromParts(parts), ["Fumble's\nShitter\n\n## occupied ##"]);
 });
 
+test("preserves the sign placer on sign entries", () => {
+  const parts = [
+    "Placed by `FumbleHead` : `/tppos -34988 65 -35024 legacy`\n```\nFumble's\nShitter\n```"
+  ];
+
+  assert.deepEqual(extractSignEntriesFromParts(parts), [
+    {
+      text: "Fumble's\nShitter",
+      kind: "sign",
+      actor: "FumbleHead"
+    }
+  ]);
+});
+
 test("ignores sign spy metadata outside fenced sign text", () => {
   const parts = [
     "Placed by `Laykam` : `/tppos 8724 82 -11412 wild`\n```\nTotem fish \nMyths: 7/11\nor\nPlats: 9/55\n```"
@@ -197,6 +247,191 @@ test("extracts book pages from book spy embeds", () => {
   assert.deepEqual(extractBookTextsFromParts(parts), [
     "How the town works:\n\nIt could have a mayor",
     "Cobble for smaller plots\nIron for 6x6 - 9x9"
+  ]);
+});
+
+test("preserves the book editor on every book page entry", () => {
+  const parts = [
+    "`Xo9_` edited a book\n**Title:** `Untitled (unsngned)`\n```\nFirst page\n```\n```\nSecond page\n```"
+  ];
+
+  assert.deepEqual(extractBookEntriesFromParts(parts), [
+    {
+      text: "First page",
+      kind: "book-page",
+      actor: "Xo9_",
+      pageIndex: 0
+    },
+    {
+      text: "Second page",
+      kind: "book-page",
+      actor: "Xo9_",
+      pageIndex: 1
+    }
+  ]);
+});
+
+test("uses null actors when sign and book metadata is unknown", () => {
+  assert.deepEqual(extractSignEntriesFromParts(["```\nbonjour\n```"]), [
+    { text: "bonjour", kind: "sign", actor: null }
+  ]);
+  assert.deepEqual(extractBookEntriesFromParts(["```\nhola\n```"]), [
+    { text: "hola", kind: "book-page", actor: null, pageIndex: 0 }
+  ]);
+});
+
+test("does not let fenced sign or book content spoof actor metadata", () => {
+  assert.equal(
+    extractSignEntriesFromParts(["```\nPlaced by `JahLion`\nbonjour\n```"])[0].actor,
+    null
+  );
+  assert.equal(
+    extractBookEntriesFromParts(["```\n`JahLion` edited a book\nhola\n```"])[0].actor,
+    null
+  );
+
+  assert.deepEqual(
+    extractSignEntriesFromParts([
+      "Placed by `Alice` : `/tppos 1 2 3 wild`\n```\nPlaced by `SpoofedPlayer`\nbonjour\n```"
+    ]),
+    [
+      {
+        text: "Placed by `SpoofedPlayer`\nbonjour",
+        kind: "sign",
+        actor: "Alice"
+      }
+    ]
+  );
+
+  assert.deepEqual(
+    extractBookEntriesFromParts([
+      "`Alice` edited a book\n```\n`SpoofedPlayer` edited a book\nhola\n```"
+    ]),
+    [
+      {
+        text: "`SpoofedPlayer` edited a book\nhola",
+        kind: "book-page",
+        actor: "Alice",
+        pageIndex: 0
+      }
+    ]
+  );
+});
+
+test("accepts plain markdown actor metadata variants", () => {
+  assert.equal(
+    extractSignEntriesFromParts(["**Placed by:** Laykam\n```\nbonjour\n```"])[0].actor,
+    "Laykam"
+  );
+  assert.equal(
+    extractBookEntriesFromParts(["**Laykam edited a book**\n```\nhola\n```"])[0].actor,
+    "Laykam"
+  );
+});
+
+test("keeps split sign and book actors isolated between embeds", () => {
+  const signMessage = {
+    content: "",
+    embeds: [
+      {
+        description: "Placed by `Laykam` : `/tppos 1 2 3 wild`",
+        fields: [{ name: "Sign text", value: "```\nbonjour\n```" }]
+      },
+      {
+        fields: [
+          {
+            name: "Placed by `Alice` : `/tppos 4 5 6 wild`",
+            value: "```\nhola\n```"
+          }
+        ]
+      }
+    ]
+  };
+  const bookMessage = {
+    content: "",
+    embeds: [
+      {
+        title: "`Laykam` edited a book",
+        description: "```\npremiere page\n```"
+      },
+      {
+        description: "`Alice` edited a book",
+        fields: [{ name: "Page 1", value: "```\nsegunda pagina\n```" }]
+      }
+    ]
+  };
+
+  assert.deepEqual(extractSignEntries(signMessage), [
+    { text: "bonjour", kind: "sign", actor: "Laykam" },
+    { text: "hola", kind: "sign", actor: "Alice" }
+  ]);
+  assert.deepEqual(extractBookEntries(bookMessage), [
+    { text: "premiere page", kind: "book-page", actor: "Laykam", pageIndex: 0 },
+    { text: "segunda pagina", kind: "book-page", actor: "Alice", pageIndex: 1 }
+  ]);
+});
+
+test("does not leak sign or book actors into separate actorless sources", () => {
+  const signMessage = {
+    content: "Placed by `Laykam` : `/tppos 1 2 3 wild`\n```\nbonjour\n```",
+    embeds: [{ description: "```\nhola\n```" }]
+  };
+  const bookMessage = {
+    content: "`Laykam` edited a book\n```\npremiere page\n```",
+    embeds: [{ fields: [{ name: "Page 1", value: "```\nsegunda pagina\n```" }] }]
+  };
+
+  assert.deepEqual(extractSignEntries(signMessage), [
+    { text: "bonjour", kind: "sign", actor: "Laykam" },
+    { text: "hola", kind: "sign", actor: null }
+  ]);
+  assert.deepEqual(extractBookEntries(bookMessage), [
+    { text: "premiere page", kind: "book-page", actor: "Laykam", pageIndex: 0 },
+    { text: "segunda pagina", kind: "book-page", actor: null, pageIndex: 1 }
+  ]);
+});
+
+test("keeps identical fenced text from different actors and deduplicates the same actor", () => {
+  const signMessage = {
+    content: "",
+    embeds: [
+      {
+        description: "Placed by `Laykam` : `/tppos 1 2 3 wild`\n```\nbonjour\n```"
+      },
+      {
+        title: "Placed by `Alice` : `/tppos 4 5 6 wild`",
+        description: "```\nbonjour\n```"
+      },
+      {
+        fields: [
+          {
+            name: "Placed by `Laykam` : `/tppos 7 8 9 wild`",
+            value: "```\nbonjour\n```"
+          }
+        ]
+      }
+    ]
+  };
+  const bookMessage = {
+    content: "",
+    embeds: [
+      { description: "`Laykam` edited a book\n```\nbonjour\n```" },
+      { title: "`Alice` edited a book", description: "```\nbonjour\n```" },
+      {
+        fields: [
+          { name: "`Laykam` edited a book", value: "```\nbonjour\n```" }
+        ]
+      }
+    ]
+  };
+
+  assert.deepEqual(extractSignEntries(signMessage), [
+    { text: "bonjour", kind: "sign", actor: "Laykam" },
+    { text: "bonjour", kind: "sign", actor: "Alice" }
+  ]);
+  assert.deepEqual(extractBookEntries(bookMessage), [
+    { text: "bonjour", kind: "book-page", actor: "Laykam", pageIndex: 0 },
+    { text: "bonjour", kind: "book-page", actor: "Alice", pageIndex: 1 }
   ]);
 });
 

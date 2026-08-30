@@ -121,6 +121,30 @@ function createTimeoutSignal(timeoutMs) {
   };
 }
 
+function waitForAbortable(promise, signal) {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(signal.reason);
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
 async function readBoundedText(response, maxBytes) {
   const declaredLength = Number(response.headers?.get?.("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
@@ -555,11 +579,14 @@ class OllamaTranslateClient {
     }
   }
 
-  async analyze(candidate, context = []) {
+  async analyze(candidate, context = [], options = {}) {
     const current = typeof candidate === "string" ? { text: candidate, kind: "unknown" } : candidate;
     const original = normalizeTextIdentity(current?.text);
     if (!original || original.length > this.maxInputChars) {
       throw new OllamaError(original ? "input-too-long" : "empty-input");
+    }
+    if (options.signal?.aborted) {
+      throw options.signal.reason;
     }
 
     const compactedContext = compactContext(
@@ -581,10 +608,10 @@ class OllamaTranslateClient {
       return cached;
     }
 
-    const existing = this.inflight.get(key);
+    const existing = options.signal ? null : this.inflight.get(key);
     if (existing) {
       this.metrics.deduplicated += 1;
-      return existing;
+      return waitForAbortable(existing, options.signal);
     }
 
     const protection = protectText(original);
@@ -594,7 +621,8 @@ class OllamaTranslateClient {
         this.requestDecision({
           kind: String(current?.kind || "unknown").slice(0, 40),
           protection,
-          context: compactedContext
+          context: compactedContext,
+          signal: options.signal
         })
       );
     } catch (error) {
@@ -602,6 +630,9 @@ class OllamaTranslateClient {
     }
 
     const tracked = request.catch((error) => {
+      if (options.signal?.aborted && error === options.signal.reason) {
+        throw options.signal.reason;
+      }
       const normalized =
         error instanceof OllamaError
           ? error
@@ -612,17 +643,18 @@ class OllamaTranslateClient {
       this.recordError(normalized.code);
       throw normalized;
     });
-    this.inflight.set(key, tracked);
+    const inflightKey = options.signal ? Symbol(key) : key;
+    this.inflight.set(inflightKey, tracked);
     tracked.then(
       (result) => {
         this.cache.set(key, result);
-        this.inflight.delete(key);
+        this.inflight.delete(inflightKey);
       },
       () => {
-        this.inflight.delete(key);
+        this.inflight.delete(inflightKey);
       }
     );
-    return tracked;
+    return waitForAbortable(tracked, options.signal);
   }
 
   ensureCircuitClosed() {
@@ -649,17 +681,23 @@ class OllamaTranslateClient {
     }
   }
 
-  async requestDecision({ kind, protection, context }) {
+  async requestDecision({ kind, protection, context, signal: externalSignal }) {
+    if (externalSignal?.aborted) {
+      throw externalSignal.reason;
+    }
     this.ensureCircuitClosed();
     this.metrics.requests += 1;
     const startedAt = this.monotonicNow();
     const timeout = createTimeoutSignal(this.timeoutMs);
+    const signal = externalSignal
+      ? AbortSignal.any([timeout.signal, externalSignal])
+      : timeout.signal;
     try {
       let structured = await this.requestStructuredDecision({
         kind,
         protection,
         context,
-        signal: timeout.signal
+        signal
       });
       let result;
       try {
@@ -681,7 +719,7 @@ class OllamaTranslateClient {
             kind,
             protection,
             context,
-            signal: timeout.signal,
+            signal,
             repairCode: error.code
           });
           result = validateDecision(structured, protection, this.maxOutputChars);
@@ -702,6 +740,9 @@ class OllamaTranslateClient {
       this.recordCircuitSuccess();
       return result;
     } catch (error) {
+      if (externalSignal?.aborted && signal.reason === externalSignal.reason) {
+        throw externalSignal.reason;
+      }
       const normalized =
         error instanceof OllamaError
           ? error

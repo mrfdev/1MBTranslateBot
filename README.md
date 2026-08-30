@@ -72,7 +72,9 @@ npm install
 cp .env.example .env
 ```
 
-Set the Discord token, server ID, required message-log channel ID, and any optional sign/book/source IDs in `.env`. Real tokens, IDs, hostnames, usernames, and paths belong only in ignored local configuration.
+Set the Discord token, server ID, required message-log channel ID, and the immutable ID of every trusted logging bot or webhook in `.env`. Real tokens, IDs, hostnames, usernames, and paths belong only in ignored local configuration. Automated sources fail closed when neither `SOURCE_BOT_IDS` nor `SOURCE_WEBHOOK_IDS` is configured. `ALLOW_ANY_SOURCE=true` is an explicit compatibility opt-in for a tightly controlled watched channel; it is not the default.
+
+To avoid translating content from players whose language the moderation team already understands, set `IGNORED_PLAYER_NAMES` in the owner-only `.env` to a comma-separated list of Minecraft names. Matching is case-insensitive and exact. It applies to private-message senders, sign placers, and book editors; matching a message recipient alone does not skip translation. Ignored content never reaches Ollama or the legacy translator, while deterministic local risk checks remain active.
 
 The minimum active configuration is:
 
@@ -80,6 +82,7 @@ The minimum active configuration is:
 DISCORD_TOKEN=your-private-token
 DISCORD_GUILD_ID=your-server-id
 LOG_CHANNEL_ID=your-message-log-channel-id
+SOURCE_BOT_IDS=your-logging-bot-id
 
 OLLAMA_MODE=active
 OLLAMA_BASE_URL=http://127.0.0.1:11434
@@ -88,6 +91,8 @@ OLLAMA_MIN_CONFIDENCE=0.90
 ```
 
 See [.env.example](.env.example) for timeout, queue, cache, context, circuit-breaker, output, and legacy settings.
+
+The optional `npm run libretranslate` command only starts an already provisioned legacy environment. It never creates a virtual environment or installs packages. If legacy `off` or `shadow` mode is required, provision `.venv-libretranslate` separately from a reviewed, fully version- and hash-locked dependency set.
 
 ### Private transport when developing from another computer
 
@@ -218,7 +223,7 @@ Service output is captured in owner-only `logs/translationbot-service.log` and `
 
 `health` combines launchd state with a fresh owner-only runtime snapshot. It checks the active release and version, Discord gateway/server/channel/slash-command readiness, configured translation backend, Ollama circuit, caches, queues, context counts, aggregate activity, uptime, and memory. Exit status `0` means healthy, `2` means running but requiring attention, and `3` means unavailable. `--json` provides the same bounded data for monitoring. `--alert-test` deliberately returns attention status `2` with the safe code `alert-test`, without stopping or changing the service, so alert wiring can be tested. The runtime refreshes the snapshot every `HEALTH_SNAPSHOT_INTERVAL_MS` (30 seconds by default).
 
-Deployment is release-based. The deployer exports only the committed Git revision into an ignored staging directory, runs `npm ci` and the complete local check before activation, links the owner-only host `.env` and persistent logs, then atomically switches the active release. It succeeds only after launchd reports a running process and fresh service output confirms Discord plus the configured local translation backend are available. Failed activation restores and verifies the preceding release; explicit rollback swaps the last two verified releases.
+Deployment is release-based. The deployer exports only the committed Git revision into an ignored staging directory, runs `npm ci` and the complete local check before activation, links the owner-only host `.env` and persistent logs, then atomically switches the active release. The LaunchAgent executes its runner and logging code from that selected verified release, while explicit environment values point it back to persistent owner-only state under the project root. It succeeds only after launchd reports a running process and fresh service output confirms Discord plus the configured local translation backend are available. Failed activation restores and verifies the preceding release; explicit rollback swaps the last two verified releases.
 
 For remote operation from an authorized workstation, create the ignored owner-only configuration:
 

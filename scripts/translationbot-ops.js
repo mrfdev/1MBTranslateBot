@@ -50,6 +50,9 @@ function xmlEscape(value) {
 
 async function renderServiceDefinition(environment = process.env) {
   const root = path.resolve(projectRoot(environment));
+  const deployRoot = path.resolve(
+    environment.TRANSLATIONBOT_DEPLOY_ROOT || path.join(root, ".deploy")
+  );
   const node = environment.TRANSLATIONBOT_NODE || process.execPath;
   if (!path.isAbsolute(node)) {
     throw new Error("The configured Node executable must be absolute.");
@@ -61,8 +64,10 @@ async function renderServiceDefinition(environment = process.env) {
   let template = await fs.readFile(templatePath, "utf8");
   const replacements = {
     __NODE_EXECUTABLE__: node,
-    __SERVICE_RUNNER__: path.join(root, "scripts", "service-runner.js"),
-    __WORKING_DIRECTORY__: path.join(root, ".deploy", "current"),
+    __SERVICE_RUNNER__: path.join(deployRoot, "current", "scripts", "service-runner.js"),
+    __WORKING_DIRECTORY__: path.join(deployRoot, "current"),
+    __PROJECT_ROOT__: root,
+    __DEPLOY_ROOT__: deployRoot,
     __EXECUTABLE_PATH__: executablePath
   };
 
@@ -274,18 +279,22 @@ function parseHealthArguments(args) {
 
 async function currentReleaseIdentity(environment = process.env) {
   const root = path.resolve(projectRoot(environment));
-  const current = path.join(root, ".deploy", "current");
-  let target;
+  const deployRoot = path.resolve(
+    environment.TRANSLATIONBOT_DEPLOY_ROOT || path.join(root, ".deploy")
+  );
+  let releasesDirectory;
+  let resolved;
   try {
-    target = await fs.readlink(current);
+    [releasesDirectory, resolved] = await Promise.all([
+      fs.realpath(path.join(deployRoot, "releases")),
+      fs.realpath(path.join(deployRoot, "current"))
+    ]);
   } catch (error) {
     if (["EINVAL", "ENOENT"].includes(error?.code)) {
       return null;
     }
     throw error;
   }
-  const resolved = path.resolve(path.dirname(current), target);
-  const releasesDirectory = path.join(root, ".deploy", "releases");
   const release = path.basename(resolved).toLocaleLowerCase();
   return path.dirname(resolved) === releasesDirectory && /^[0-9a-f]{40}$/u.test(release)
     ? release

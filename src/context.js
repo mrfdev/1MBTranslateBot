@@ -34,17 +34,28 @@ class ConversationContextStore {
     });
   }
 
-  contextFor(entry) {
+  beginTurn(entry) {
     const key = this.resolveConversationKey(entry);
-    if (!key) {
-      return [];
-    }
-
-    return [...(this.conversations.get(key) || [])];
+    return Object.freeze({
+      key,
+      context: this.contextForTurn({ key })
+    });
   }
 
-  remember(entry, result) {
-    const key = this.resolveConversationKey(entry);
+  beginTurns(entries) {
+    return Object.freeze(
+      entries.map((entry) =>
+        ["direct-message", "reply"].includes(entry?.kind) ? this.beginTurn(entry) : null
+      )
+    );
+  }
+
+  contextForTurn(turn) {
+    return turn?.key ? [...(this.conversations.get(turn.key) || [])] : [];
+  }
+
+  remember(turn, entry, result) {
+    const key = turn?.key;
     if (!key) {
       return;
     }

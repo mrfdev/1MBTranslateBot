@@ -213,11 +213,14 @@ test("shadow mode returns legacy output without waiting for or applying Ollama",
     release = resolve;
   });
   let ollamaCalls = 0;
+  let shadowSignal;
+  let trackedShadow;
   const service = new TranslationService({
     mode: "shadow",
     ollama: {
-      async analyze() {
+      async analyze(_entry, _context, options) {
         ollamaCalls += 1;
+        shadowSignal = options.signal;
         await blocked;
         return decision({ translation: "Different model output" });
       },
@@ -233,16 +236,67 @@ test("shadow mode returns legacy output without waiting for or applying Ollama",
     enableRiskFlag: false
   });
 
-  const visible = await service.translate({
-    text: "Dit is een lange Nederlandse boodschap",
-    kind: "direct-message"
-  });
+  const controller = new AbortController();
+  const visible = await service.translate(
+    {
+      text: "Dit is een lange Nederlandse boodschap",
+      kind: "direct-message"
+    },
+    [],
+    {
+      signal: controller.signal,
+      trackBackgroundTask(task) {
+        trackedShadow = task;
+      }
+    }
+  );
   assert.deepEqual(visible.translations, ["Visible legacy output"]);
   assert.equal(visible.provider, "local-dictionary");
   assert.equal(ollamaCalls, 1);
+  assert.equal(shadowSignal, controller.signal);
+  assert.ok(trackedShadow instanceof Promise);
   release();
   await service.drainShadow();
   assert.equal(service.metricsSnapshot().shadow_completed, 1);
+});
+
+test("does not count an event-cancelled shadow request as a provider failure", async () => {
+  const controller = new AbortController();
+  const service = new TranslationService({
+    mode: "shadow",
+    ollama: {
+      async analyze(_entry, _context, options) {
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => reject(options.signal.reason),
+            { once: true }
+          );
+        });
+      },
+      metricsSnapshot: () => ({})
+    },
+    legacy: {
+      detect: async () => ({ language: "nl", confidence: 0.99 }),
+      translate: async () => ["Visible legacy output"]
+    },
+    targetLanguage: "en",
+    minimumConfidence: 0.9,
+    minimumDetectionConfidence: 0.5,
+    enableRiskFlag: false
+  });
+
+  await service.translate(
+    { text: "Dit is een lange Nederlandse boodschap", kind: "direct-message" },
+    [],
+    { signal: controller.signal }
+  );
+  controller.abort(new Error("message-time-budget"));
+  await service.drainShadow();
+  const metrics = service.metricsSnapshot();
+  assert.equal(metrics.failures, 0);
+  assert.equal(metrics.shadow_failures, 0);
+  assert.equal(metrics.shadow_completed, 0);
 });
 
 test("keeps deterministic risk flags independent from translation availability", async () => {

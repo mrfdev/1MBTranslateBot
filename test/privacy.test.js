@@ -50,3 +50,19 @@ test("both local HTTP services are constrained to loopback", () => {
   assert.match(read("src/config.js"), /normalizeLoopbackOllamaBaseUrl/u);
   assert.match(read("src/ollama-translator.js"), /LOCAL_HOSTS/u);
 });
+
+test("legacy provider startup executes only a pre-provisioned environment", () => {
+  const launcher = read("scripts/start-libretranslate.sh");
+  assert.doesNotMatch(launcher, /pip\s+install|python3\s+-m\s+venv|--upgrade/u);
+  assert.match(launcher, /No pre-provisioned legacy translator was found/u);
+  assert.match(launcher, /exec "\$LIBRE_VENV_DIR\/bin\/libretranslate"/u);
+});
+
+test("managed launchd bootstrap never points at source-checkout project code", () => {
+  const operations = read("scripts/translationbot-ops.js");
+  const runner = read("scripts/service-runner.js");
+  assert.match(operations, /current", "scripts", "service-runner\.js/u);
+  assert.doesNotMatch(operations, /path\.join\(root, "scripts", "service-runner\.js"\)/u);
+  assert.doesNotMatch(runner, /require\("\.\.\/src\//u);
+  assert.match(runner, /sanitizeServiceLogText\s*\}\s*=\s*require\(path\.join\(resolvedRelease/u);
+});

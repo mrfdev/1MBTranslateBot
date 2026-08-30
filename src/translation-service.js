@@ -212,29 +212,36 @@ class TranslationService {
     };
   }
 
-  async translate(entry, context = []) {
+  async translate(entry, context = [], options = {}) {
     if (this.mode === "active") {
-      return this.translateWithOllama(entry, context);
+      return this.translateWithOllama(entry, context, options);
     }
     if (this.mode === "shadow") {
-      this.startShadow(entry, context);
+      const task = this.startShadow(entry, context, options);
+      options.trackBackgroundTask?.(task);
     }
-    return this.translateLegacy(entry, context);
+    return this.translateLegacy(entry, context, options);
   }
 
-  startShadow(entry, context) {
+  startShadow(entry, context, options = {}) {
     this.metrics.shadow_started += 1;
-    const task = this.translateWithOllama(entry, context, { shadow: true })
+    const task = this.translateWithOllama(entry, context, {
+      shadow: true,
+      signal: options.signal
+    })
       .then(() => {
         this.metrics.shadow_completed += 1;
       })
       .catch(() => {
-        this.metrics.shadow_failures += 1;
+        if (!options.signal?.aborted) {
+          this.metrics.shadow_failures += 1;
+        }
       })
       .finally(() => {
         this.shadowTasks.delete(task);
-      });
+    });
     this.shadowTasks.add(task);
+    return task;
   }
 
   async translateWithOllama(entry, context, options = {}) {
@@ -249,8 +256,11 @@ class TranslationService {
 
     let decision;
     try {
-      decision = await this.ollama.analyze(entry, context);
+      decision = await this.ollama.analyze(entry, context, { signal: options.signal });
     } catch (error) {
+      if (options.signal?.aborted) {
+        throw options.signal.reason;
+      }
       this.metrics.failures += 1;
       this.onEvent({ event: "ollama.failure", code: safeErrorCode(error) });
       return this.riskOnlyResult(original);
@@ -302,13 +312,13 @@ class TranslationService {
     };
   }
 
-  async translateLegacy(entry, context) {
+  async translateLegacy(entry, context, options = {}) {
     const original = String(entry?.text ?? "");
     if (looksProbablyEnglish(original)) {
       return this.riskOnlyResult(original, "en");
     }
 
-    const detected = await this.legacy.detect(original);
+    const detected = await this.legacy.detect(original, { signal: options.signal });
     if (
       detected.language === this.targetLanguage &&
       detected.confidence >= this.minimumDetectionConfidence
@@ -325,7 +335,9 @@ class TranslationService {
             this.contextLanguageConfidence,
             this.targetLanguage
           ) || "auto";
-    const translations = (await this.legacy.translate(original, sourceLanguage)).slice(
+    const translations = (await this.legacy.translate(original, sourceLanguage, {
+      signal: options.signal
+    })).slice(
       0,
       this.maxTranslations
     );

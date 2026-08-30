@@ -17,6 +17,10 @@
     <string>production</string>
     <key>PATH</key>
     <string>__EXECUTABLE_PATH__</string>
+    <key>TRANSLATIONBOT_PROJECT_ROOT</key>
+    <string>__PROJECT_ROOT__</string>
+    <key>TRANSLATIONBOT_DEPLOY_ROOT</key>
+    <string>__DEPLOY_ROOT__</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

@@ -5,17 +5,23 @@ function normalizeText(value) {
     .trim();
 }
 
-function collectEmbedText(embed) {
+function inspectPart(budget, value) {
+  budget?.inspect?.(value);
+}
+
+function collectEmbedText(embed, budget) {
   const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
   const parts = [];
 
   if (data.description) {
+    inspectPart(budget, data.description);
     parts.push(data.description);
   }
 
   if (Array.isArray(data.fields)) {
     for (const field of data.fields) {
       if (field.value) {
+        inspectPart(budget, field.value);
         parts.push(field.value);
       }
     }
@@ -24,44 +30,87 @@ function collectEmbedText(embed) {
   return parts;
 }
 
-function collectEmbedMetadataText(embed) {
+function collectEmbedMetadataText(embed, budget) {
   const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
-  const parts = [...collectEmbedText(data)];
+  const parts = [...collectEmbedText(data, budget)];
 
   if (data.author?.name) {
+    inspectPart(budget, data.author.name);
     parts.push(data.author.name);
   }
   if (data.title) {
+    inspectPart(budget, data.title);
     parts.push(data.title);
   }
   if (Array.isArray(data.fields)) {
     for (const field of data.fields) {
       if (field.name) {
+        inspectPart(budget, field.name);
         parts.push(field.name);
       }
     }
   }
   if (data.footer?.text) {
+    inspectPart(budget, data.footer.text);
     parts.push(data.footer.text);
   }
 
   return parts;
 }
 
-function collectMessageTextParts(message) {
+function collectMessageTextParts(message, budget) {
   const parts = [];
 
   if (message.content) {
+    inspectPart(budget, message.content);
     parts.push(message.content);
   }
 
   if (Array.isArray(message.embeds)) {
     for (const embed of message.embeds) {
-      parts.push(...collectEmbedText(embed));
+      parts.push(...collectEmbedText(embed, budget));
     }
   }
 
   return parts;
+}
+
+function collectMessageSourceGroups(message) {
+  const groups = [];
+
+  if (message.content) {
+    groups.push([message.content]);
+  }
+
+  if (Array.isArray(message.embeds)) {
+    for (const embed of message.embeds) {
+      const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
+      const parts = [];
+
+      if (data.title) {
+        parts.push(data.title);
+      }
+      if (data.description) {
+        parts.push(data.description);
+      }
+      if (Array.isArray(data.fields)) {
+        for (const field of data.fields) {
+          if (field.name) {
+            parts.push(field.name);
+          }
+          if (field.value) {
+            parts.push(field.value);
+          }
+        }
+      }
+
+      if (parts.length > 0) {
+        groups.push(parts);
+      }
+    }
+  }
+
+  return groups;
 }
 
 function extractMarkedCode(raw) {
@@ -92,6 +141,10 @@ function stripMarkedCode(raw) {
   return raw
     .replace(/```[\s\S]*?```/g, "\n")
     .replace(/`[^`\n]+`/g, " ");
+}
+
+function stripFencedContent(raw) {
+  return String(raw || "").split("```", 1)[0];
 }
 
 function removeDiscordMarkdown(value) {
@@ -172,17 +225,52 @@ function cleanParticipant(value) {
   return cleaned || null;
 }
 
-function extractMessageActor(parts) {
+function cleanPlayerActor(value) {
+  const cleaned = String(value || "")
+    .replace(/^[`*~'\"]+/, "")
+    .replace(/[`*~'\",.:;!?]+$/, "")
+    .trim();
+
+  return /^[A-Za-z0-9_]{1,16}$/u.test(cleaned) ? cleaned : null;
+}
+
+function maskFencedCode(raw) {
+  return String(raw || "").replace(/```[\s\S]*?(?:```|$)/gu, (block) =>
+    block.replace(/[^\r\n]/gu, " ")
+  );
+}
+
+function extractMessageActorFromRaw(raw) {
+  const marked = raw.match(/^(?:>+\s*)?(?:\*\*)?Message by\s+`([^`\r\n]+)`/im);
+  if (marked) {
+    return cleanParticipant(marked[1]);
+  }
+
+  const plain = removeDiscordMarkdown(raw).match(/^Message by\s+([^\s,\r\n]+)/im);
+  return plain ? cleanParticipant(plain[1]) : null;
+}
+
+function extractMessageActorsFromRaw(raw) {
+  const metadata = maskFencedCode(raw);
+  const actors = [];
+
+  for (const line of metadata.split(/\r?\n/gu)) {
+    const actor = extractMessageActorFromRaw(line);
+    if (actor) {
+      actors.push(actor);
+    }
+  }
+
+  return actors;
+}
+
+function extractMessageActor(parts, budget) {
   for (const part of parts) {
     const raw = String(part || "");
-    const marked = raw.match(/^(?:>+\s*)?(?:\*\*)?Message by\s+`([^`\r\n]+)`/im);
-    if (marked) {
-      return cleanParticipant(marked[1]);
-    }
-
-    const plain = removeDiscordMarkdown(raw).match(/^Message by\s+([^\s,\r\n]+)/im);
-    if (plain) {
-      return cleanParticipant(plain[1]);
+    inspectPart(budget, raw);
+    const actor = extractMessageActorsFromRaw(raw)[0];
+    if (actor) {
+      return actor;
     }
   }
 
@@ -220,38 +308,74 @@ function textKey(value) {
     .replace(/\s+/g, " ");
 }
 
-function extractSignTextsFromParts(parts) {
-  return extractFencedTextsFromParts(parts);
+function extractSignTextsFromParts(parts, budget) {
+  return extractSignEntriesFromParts(parts, budget).map((entry) => entry.text);
 }
 
-function extractBookTextsFromParts(parts) {
-  return extractFencedTextsFromParts(parts);
+function extractBookTextsFromParts(parts, budget) {
+  return extractBookEntriesFromParts(parts, budget).map((entry) => entry.text);
 }
 
-function extractFencedTextsFromParts(parts) {
+function extractMetadataActor(raw, kind) {
+  const metadata = removeDiscordMarkdown(stripFencedContent(raw));
+  const pattern =
+    kind === "sign"
+      ? /^Placed by\s*:?\s*(?:`([^`\r\n]+)`|([A-Za-z0-9_]{1,16}))(?=\s*(?::|,|$))/im
+      : /^(?:`([^`\r\n]+)`|([A-Za-z0-9_]{1,16}))\s+edited a book(?=\s|$)/im;
+  const match = metadata.match(pattern);
+
+  return match ? cleanPlayerActor(match[1] || match[2]) : null;
+}
+
+function extractFencedEntriesFromSourceGroups(sourceGroups, budget, kind) {
   const seen = new Set();
   const results = [];
 
-  for (const part of parts) {
-    const raw = String(part || "");
-    if (!raw.trim()) {
-      continue;
-    }
+  for (const parts of sourceGroups) {
+    const rawParts = parts.map((part) => String(part || ""));
+    const partActors = rawParts.map((raw) => extractMetadataActor(raw, kind));
+    const actors = [...new Set(partActors.filter(Boolean))];
+    const fallbackActor = actors.length === 1 ? actors[0] : null;
 
-    const fencedBlocks = extractFencedCode(raw);
-    for (const block of fencedBlocks) {
-      const text = cleanSignText(block);
-      const key = textKey(text);
-      if (!text || !key || seen.has(key)) {
+    for (const [partIndex, raw] of rawParts.entries()) {
+      inspectPart(budget, raw);
+      if (!raw.trim()) {
         continue;
       }
 
-      seen.add(key);
-      results.push(text);
+      const fencedBlocks = extractFencedCode(raw);
+      for (const block of fencedBlocks) {
+        const text = cleanSignText(block);
+        const actor = partActors[partIndex] || fallbackActor;
+        const key = `${String(actor || "").toLowerCase()}\u001f${textKey(text)}`;
+        if (!text || !key || seen.has(key)) {
+          continue;
+        }
+
+        budget?.addCandidate?.(text);
+        seen.add(key);
+        const entry = {
+          text,
+          kind,
+          actor
+        };
+        if (kind === "book-page") {
+          entry.pageIndex = results.length;
+        }
+        results.push(entry);
+      }
     }
   }
 
   return results;
+}
+
+function extractSignEntriesFromParts(parts, budget) {
+  return extractFencedEntriesFromSourceGroups([parts], budget, "sign");
+}
+
+function extractBookEntriesFromParts(parts, budget) {
+  return extractFencedEntriesFromSourceGroups([parts], budget, "book-page");
 }
 
 function extractTranslatableTextsFromParts(parts) {
@@ -268,22 +392,34 @@ function entryKey(entry) {
 }
 
 function extractTranslatableEntriesFromParts(parts, options = {}) {
+  const budget = options.budget;
   const seen = new Set();
   const results = [];
-  const detectedActors = [
-    ...new Set(parts.flatMap((part) => extractMessageActor([part]) || []).filter(Boolean))
-  ];
-  const fallbackActor = options.actor || (detectedActors.length === 1 ? detectedActors[0] : null);
 
   for (const part of parts) {
-    const records = String(part || "").split(/(?=^(?:>+\s*)?(?:\*\*)?Message by\s+)/gim);
+    const partText = String(part || "");
+    inspectPart(budget, partText);
+    const detectedActors = new Map();
+    for (const actor of extractMessageActorsFromRaw(partText)) {
+      detectedActors.set(String(actor).toLowerCase(), actor);
+    }
+    const fallbackActor =
+      options.actor || (detectedActors.size === 1 ? detectedActors.values().next().value : null);
+    const maskedPart = maskFencedCode(partText);
+    const headerOffsets = [
+      ...maskedPart.matchAll(/^(?:>+\s*)?(?:(?:\*\*|__)\s*)?Message by\s+/gimu)
+    ].map((match) => match.index);
+    const recordOffsets = headerOffsets[0] === 0 ? headerOffsets : [0, ...headerOffsets];
+    const records = recordOffsets.map((start, index) =>
+      partText.slice(start, recordOffsets[index + 1] ?? partText.length)
+    );
     for (const record of records) {
       const raw = String(record || "").replace(/\r\n|\r/g, "\n");
       if (!raw.trim()) {
         continue;
       }
 
-      const actor = extractMessageActor([record]) || fallbackActor;
+      const actor = extractMessageActor([record], budget) || fallbackActor;
 
       const candidates = [...extractMarkedCode(raw), stripMarkedCode(raw)];
       for (const candidate of candidates) {
@@ -302,6 +438,7 @@ function extractTranslatableEntriesFromParts(parts, options = {}) {
             continue;
           }
 
+          budget?.addCandidate?.(entry.text);
           seen.add(key);
           results.push(entry);
         }
@@ -316,20 +453,25 @@ function extractTranslatableTexts(message) {
   return extractTranslatableEntries(message).map((entry) => entry.text);
 }
 
-function extractTranslatableEntries(message) {
+function extractTranslatableEntries(message, budget) {
   const entries = [];
   if (message.content) {
-    entries.push(...extractTranslatableEntriesFromParts([message.content]));
+    entries.push(...extractTranslatableEntriesFromParts([message.content], { budget }));
   }
 
   if (Array.isArray(message.embeds)) {
     for (const embed of message.embeds) {
       const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
-      const embedActor = extractMessageActor(collectEmbedMetadataText(data));
+      const embedActor = extractMessageActor(
+        collectEmbedMetadataText(data, budget),
+        budget
+      );
 
       if (data.description) {
-        const actor = extractMessageActor([data.description]) || embedActor;
-        entries.push(...extractTranslatableEntriesFromParts([data.description], { actor }));
+        const actor = extractMessageActor([data.description], budget) || embedActor;
+        entries.push(
+          ...extractTranslatableEntriesFromParts([data.description], { actor, budget })
+        );
       }
 
       if (Array.isArray(data.fields)) {
@@ -338,8 +480,10 @@ function extractTranslatableEntries(message) {
             continue;
           }
 
-          const actor = extractMessageActor([field.name, field.value]) || embedActor;
-          entries.push(...extractTranslatableEntriesFromParts([field.value], { actor }));
+          const actor = extractMessageActor([field.name, field.value], budget) || embedActor;
+          entries.push(
+            ...extractTranslatableEntriesFromParts([field.value], { actor, budget })
+          );
         }
       }
     }
@@ -357,22 +501,42 @@ function extractTranslatableEntries(message) {
   });
 }
 
-function extractSignTexts(message) {
-  return extractSignTextsFromParts(collectMessageTextParts(message));
+function extractSignTexts(message, budget) {
+  return extractSignEntries(message, budget).map((entry) => entry.text);
 }
 
-function extractBookTexts(message) {
-  return extractBookTextsFromParts(collectMessageTextParts(message));
+function extractBookTexts(message, budget) {
+  return extractBookEntries(message, budget).map((entry) => entry.text);
+}
+
+function extractSignEntries(message, budget) {
+  return extractFencedEntriesFromSourceGroups(
+    collectMessageSourceGroups(message),
+    budget,
+    "sign"
+  );
+}
+
+function extractBookEntries(message, budget) {
+  return extractFencedEntriesFromSourceGroups(
+    collectMessageSourceGroups(message),
+    budget,
+    "book-page"
+  );
 }
 
 module.exports = {
   collectMessageTextParts,
+  extractBookEntries,
+  extractBookEntriesFromParts,
   extractBookTexts,
   extractBookTextsFromParts,
   extractMessageActor,
   extractTranslatableEntries,
   extractTranslatableEntriesFromParts,
   extractTextFromCommand,
+  extractSignEntries,
+  extractSignEntriesFromParts,
   extractSignTexts,
   extractSignTextsFromParts,
   extractTranslatableTexts,

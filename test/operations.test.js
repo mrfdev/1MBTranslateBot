@@ -1,7 +1,10 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
+  currentReleaseIdentity,
   parseJobState,
   parseHealthArguments,
   parseLogArguments,
@@ -16,6 +19,7 @@ const {
 } = require("../scripts/translationbot-remote");
 const { hasHealthyServiceLog } = require("../scripts/deploy-health");
 const { parseAheadBehind } = require("../scripts/safe-update");
+const { installConsoleCapture, resolveReleaseRoot } = require("../scripts/service-runner");
 
 test("renders a sanitized auto-starting LaunchAgent definition", async () => {
   const root = path.resolve(__dirname, "..");
@@ -26,7 +30,14 @@ test("renders a sanitized auto-starting LaunchAgent definition", async () => {
   assert.match(definition, /<string>com\.mrfdev\.translationbot<\/string>/u);
   assert.match(definition, /<key>RunAtLoad<\/key>\s*<true\/>/u);
   assert.match(definition, /<key>KeepAlive<\/key>/u);
-  assert.match(definition, /\.deploy\/current/u);
+  assert.match(definition, /\.deploy\/current\/scripts\/service-runner\.js/u);
+  assert.equal(
+    definition.includes(`<string>${path.join(root, "scripts", "service-runner.js")}</string>`),
+    false,
+    "launchd must not execute the mutable source-checkout runner"
+  );
+  assert.match(definition, /<key>TRANSLATIONBOT_PROJECT_ROOT<\/key>/u);
+  assert.match(definition, /<key>TRANSLATIONBOT_DEPLOY_ROOT<\/key>/u);
   assert.doesNotMatch(definition, /__[A-Z0-9_]+__/u);
   assert.doesNotMatch(
     require("node:fs").readFileSync(
@@ -35,6 +46,35 @@ test("renders a sanitized auto-starting LaunchAgent definition", async () => {
     ),
     /\/(?:Users|home)\/[A-Za-z0-9._-]+/u
   );
+});
+
+test("requires and applies the release-local log sanitizer", () => {
+  const original = {
+    log: console.log,
+    info: console.info,
+    debug: console.debug,
+    error: console.error,
+    warn: console.warn
+  };
+  const stdout = [];
+  const stderr = [];
+  const manager = {
+    stdout: (value) => stdout.push(value),
+    stderr: (value) => stderr.push(value)
+  };
+  try {
+    assert.throws(
+      () => installConsoleCapture(manager),
+      /release-local log sanitizer/u
+    );
+    installConsoleCapture(manager, (value) => value.replaceAll("secret", "[redacted]"));
+    console.log("secret stdout");
+    console.error("secret stderr");
+    assert.deepEqual(stdout, ["[redacted] stdout"]);
+    assert.deepEqual(stderr, ["[redacted] stderr"]);
+  } finally {
+    Object.assign(console, original);
+  }
 });
 
 test("parses launchd state without exposing the full job", () => {
@@ -108,4 +148,35 @@ test("escapes generated plist values and requires complete active Ollama health"
 test("parses safe-update divergence counts", () => {
   assert.deepEqual(parseAheadBehind("0\t3"), { ahead: 0, behind: 3 });
   assert.throws(() => parseAheadBehind("unexpected"), /invalid/u);
+});
+
+test("binds the managed runner to a commit-named release directory", async () => {
+  const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "translationbot-release-test-"));
+  const deployRoot = path.join(temporaryRoot, ".deploy");
+  const releasesRoot = path.join(deployRoot, "releases");
+  const releaseName = "a".repeat(40);
+  const releaseRoot = path.join(releasesRoot, releaseName);
+  const outsideRoot = path.join(temporaryRoot, "source-checkout");
+  try {
+    await fs.mkdir(releaseRoot, { recursive: true });
+    await fs.mkdir(outsideRoot);
+    await fs.symlink(path.join("releases", releaseName), path.join(deployRoot, "current"));
+    assert.deepEqual(await resolveReleaseRoot(deployRoot, releaseRoot), {
+      releaseName,
+      resolvedRelease: await fs.realpath(releaseRoot)
+    });
+    await assert.rejects(
+      resolveReleaseRoot(deployRoot, outsideRoot),
+      /not inside a verified release directory/u
+    );
+    assert.equal(
+      await currentReleaseIdentity({
+        TRANSLATIONBOT_PROJECT_ROOT: outsideRoot,
+        TRANSLATIONBOT_DEPLOY_ROOT: deployRoot
+      }),
+      releaseName
+    );
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
 });

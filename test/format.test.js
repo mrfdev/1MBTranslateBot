@@ -45,3 +45,18 @@ test("neutralizes mentions and markdown fences in both original and translated o
   assert.match(output, /@\u200beveryone/u);
   assert.match(output, /<@\u200b123456789012345678>/u);
 });
+
+test("forces heading metadata onto one markdown-safe line", () => {
+  const output = formatTranslation({
+    original: "hola",
+    translations: ["hello"],
+    languageLabel: "French)\n**FORGED** [review](https://example.invalid @everyone",
+    provider: "local-dictionary",
+    flagged: false
+  });
+
+  assert.equal(output.split("\n").length, 1);
+  assert.doesNotMatch(output, /\*\*FORGED\*\*|\[review\]\(https:\/\/|@everyone/u);
+  assert.match(output, /@\u200beveryone/u);
+  assert.match(output, /https:\u200b\/\//u);
+});

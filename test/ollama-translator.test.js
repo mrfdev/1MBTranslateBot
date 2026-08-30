@@ -454,6 +454,102 @@ test("uses expiring hashed cache keys and deduplicates simultaneous normalized r
   assert.equal(translateClient.metricsSnapshot().cache_hits, 1);
 });
 
+test("lets an event deadline stop waiting on an independently bounded shared request", async () => {
+  let release;
+  const blocked = new Promise((resolve) => {
+    release = resolve;
+  });
+  const translateClient = client({
+    fetchImpl: async () => {
+      await blocked;
+      return ollamaResponse(modelDecision());
+    }
+  });
+
+  const first = translateClient.analyze("ordinary repeated text\nsecond line");
+  const controller = new AbortController();
+  const reason = new Error("message-time-budget");
+  controller.abort(reason);
+  await assert.rejects(
+    translateClient.analyze("ordinary repeated text\nsecond line", [], {
+      signal: controller.signal
+    }),
+    (error) => error === reason
+  );
+  release();
+  await first;
+});
+
+test("drops an event-scoped request that expires while waiting in the provider queue", async () => {
+  let calls = 0;
+  let release;
+  const blocked = new Promise((resolve) => {
+    release = resolve;
+  });
+  const translateClient = client({
+    fetchImpl: async () => {
+      calls += 1;
+      await blocked;
+      return ollamaResponse(modelDecision());
+    }
+  });
+
+  const first = translateClient.analyze("first sufficiently long sentence");
+  await Promise.resolve();
+  const controller = new AbortController();
+  const reason = new Error("message-time-budget");
+  const queued = translateClient.analyze("second sufficiently long sentence", [], {
+    signal: controller.signal
+  });
+  controller.abort(reason);
+  await assert.rejects(queued, (error) => error === reason);
+  release();
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+});
+
+test("isolates event cancellation from the circuit and other same-key callers", async () => {
+  let calls = 0;
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const translateClient = client({
+    circuitFailureThreshold: 1,
+    fetchImpl: async (_url, options) => {
+      calls += 1;
+      if (calls === 1) {
+        markStarted();
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener(
+            "abort",
+            () => reject(options.signal.reason),
+            { once: true }
+          );
+        });
+      }
+      return ollamaResponse(modelDecision());
+    }
+  });
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const text = "same sufficiently long sentence for two events";
+  const first = translateClient.analyze(text, [], { signal: firstController.signal });
+  await started;
+  const second = translateClient.analyze(text, [], { signal: secondController.signal });
+  const reason = new Error("message-time-budget");
+  firstController.abort(reason);
+
+  await assert.rejects(first, (error) => error === reason);
+  assert.equal((await second).decision, "leave_unchanged");
+  assert.equal(calls, 2);
+  const metrics = translateClient.metricsSnapshot();
+  assert.equal(metrics.circuit_state, "closed");
+  assert.equal(metrics.errors, 0);
+  assert.equal(metrics.deduplicated, 0);
+});
+
 test("bounds concurrency and rejects work beyond the queue limit", async () => {
   let active = 0;
   let maxActive = 0;

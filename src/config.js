@@ -3,6 +3,7 @@ const {
   isLocalOllamaModelName,
   normalizeLoopbackOllamaBaseUrl
 } = require("./ollama-translator");
+const { createPlayerNameSet } = require("./player-policy");
 
 dotenv.config();
 
@@ -169,6 +170,13 @@ function loadTranslationConfig(env = process.env) {
     ),
     libreTranslateUrl,
     libreTranslateApiKey: env.LIBRETRANSLATE_API_KEY || "",
+    libreTranslateMaxResponseBytes: numberValue(
+      env.LIBRETRANSLATE_MAX_RESPONSE_BYTES,
+      65_536,
+      1_024,
+      1_048_576,
+      true
+    ),
     translationAlternatives: numberValue(
       env.TRANSLATION_ALTERNATIVES,
       2,
@@ -224,15 +232,35 @@ function loadTranslationConfig(env = process.env) {
 }
 
 function loadConfig(env = process.env) {
+  const discordToken = required(env, "DISCORD_TOKEN");
+  const guildId = required(env, "DISCORD_GUILD_ID");
+  const logChannelId = required(env, "LOG_CHANNEL_ID");
+  const sourceBotIds = new Set(csv(env.SOURCE_BOT_IDS));
+  const sourceWebhookIds = new Set(csv(env.SOURCE_WEBHOOK_IDS));
+  const ignoredPlayerNames = createPlayerNameSet(csv(env.IGNORED_PLAYER_NAMES));
+  const allowAnySource = booleanValue(env.ALLOW_ANY_SOURCE, false);
+  const translateHumanMessages = booleanValue(env.TRANSLATE_HUMAN_MESSAGES, false);
+  if (
+    sourceBotIds.size === 0 &&
+    sourceWebhookIds.size === 0 &&
+    !allowAnySource &&
+    !translateHumanMessages
+  ) {
+    throw new Error("missing-trusted-message-source");
+  }
+
   return {
     ...loadTranslationConfig(env),
-    discordToken: required(env, "DISCORD_TOKEN"),
-    guildId: required(env, "DISCORD_GUILD_ID"),
-    logChannelId: required(env, "LOG_CHANNEL_ID"),
+    discordToken,
+    guildId,
+    logChannelId,
     signChannelId: String(env.SIGN_CHANNEL_ID || "").trim(),
     bookChannelId: String(env.BOOK_CHANNEL_ID || "").trim(),
-    sourceBotIds: new Set(csv(env.SOURCE_BOT_IDS)),
-    translateHumanMessages: booleanValue(env.TRANSLATE_HUMAN_MESSAGES, false),
+    sourceBotIds,
+    sourceWebhookIds,
+    ignoredPlayerNames,
+    allowAnySource,
+    translateHumanMessages,
     messageMaxConcurrency: numberValue(
       env.MESSAGE_MAX_CONCURRENCY,
       2,
@@ -241,6 +269,48 @@ function loadConfig(env = process.env) {
       true
     ),
     messageQueueLimit: numberValue(env.MESSAGE_QUEUE_LIMIT, 100, 0, 10_000, true),
+    messageMaxInspectedChars: numberValue(
+      env.MESSAGE_MAX_INSPECTED_CHARS,
+      100_000,
+      1_000,
+      1_000_000,
+      true
+    ),
+    messageMaxCandidates: numberValue(
+      env.MESSAGE_MAX_CANDIDATES,
+      16,
+      1,
+      64,
+      true
+    ),
+    messageMaxCandidateChars: numberValue(
+      env.MESSAGE_MAX_CANDIDATE_CHARS,
+      20_000,
+      1_000,
+      100_000,
+      true
+    ),
+    messageProcessingBudgetMs: numberValue(
+      env.MESSAGE_PROCESSING_BUDGET_MS,
+      60_000,
+      1_000,
+      300_000,
+      true
+    ),
+    messageMaxOutputChars: numberValue(
+      env.MESSAGE_MAX_OUTPUT_CHARS,
+      15_200,
+      1_900,
+      100_000,
+      true
+    ),
+    messageMaxOutputChunks: numberValue(
+      env.MESSAGE_MAX_OUTPUT_CHUNKS,
+      8,
+      1,
+      32,
+      true
+    ),
     healthSnapshotIntervalMs: numberValue(
       env.HEALTH_SNAPSHOT_INTERVAL_MS,
       30_000,

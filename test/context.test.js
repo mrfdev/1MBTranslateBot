@@ -15,8 +15,9 @@ test("keeps context isolated by player pair and resolves replies to the last pee
     recipient: "Bob"
   };
 
-  assert.deepEqual(store.contextFor(first), []);
-  store.remember(first, {
+  const firstTurn = store.beginTurn(first);
+  assert.deepEqual(firstTurn.context, []);
+  store.remember(firstTurn, first, {
     translations: ["hello"],
     language: "pl",
     confidence: 0.9
@@ -28,7 +29,8 @@ test("keeps context isolated by player pair and resolves replies to the last pee
     actor: "Bob",
     recipient: null
   };
-  assert.deepEqual(store.contextFor(reply), [
+  const replyTurn = store.beginTurn(reply);
+  assert.deepEqual(replyTurn.context, [
     {
       speaker: "Alice",
       original: "cześć",
@@ -39,12 +41,12 @@ test("keeps context isolated by player pair and resolves replies to the last pee
   ]);
 
   assert.deepEqual(
-    store.contextFor({
+    store.beginTurn({
       text: "bonjour",
       kind: "direct-message",
       actor: "Alice",
       recipient: "Charlie"
-    }),
+    }).context,
     []
   );
   assert.equal(directMessageKey("Bob", "Alice"), directMessageKey("alice", "bob"));
@@ -65,9 +67,10 @@ test("expires conversation context", () => {
     recipient: "Bob"
   };
 
-  store.remember(entry, { translations: ["hello"], language: "es", confidence: 0.9 });
+  const turn = store.beginTurn(entry);
+  store.remember(turn, entry, { translations: ["hello"], language: "es", confidence: 0.9 });
   now = 101;
-  assert.deepEqual(store.contextFor(entry), []);
+  assert.deepEqual(store.beginTurn(entry).context, []);
 });
 
 test("keeps reply peer resolution alive while the conversation is active", () => {
@@ -85,7 +88,12 @@ test("keeps reply peer resolution alive while the conversation is active", () =>
     recipient: "Bob"
   };
 
-  store.remember(directMessage, { translations: ["hello"], language: "pl", confidence: 0.9 });
+  const directTurn = store.beginTurn(directMessage);
+  store.remember(directTurn, directMessage, {
+    translations: ["hello"],
+    language: "pl",
+    confidence: 0.9
+  });
 
   now = 90;
   const bobReply = {
@@ -94,8 +102,13 @@ test("keeps reply peer resolution alive while the conversation is active", () =>
     actor: "Bob",
     recipient: null
   };
-  assert.equal(store.contextFor(bobReply).length, 1);
-  store.remember(bobReply, { translations: ["how are you?"], language: "pl", confidence: 0.9 });
+  const bobTurn = store.beginTurn(bobReply);
+  assert.equal(bobTurn.context.length, 1);
+  store.remember(bobTurn, bobReply, {
+    translations: ["how are you?"],
+    language: "pl",
+    confidence: 0.9
+  });
 
   now = 101;
   const aliceReply = {
@@ -104,5 +117,96 @@ test("keeps reply peer resolution alive while the conversation is active", () =>
     actor: "Alice",
     recipient: null
   };
-  assert.equal(store.contextFor(aliceReply).length, 2);
+  assert.equal(store.beginTurn(aliceReply).context.length, 2);
+});
+
+test("keeps an in-flight reply bound to its intake-time participant pair", () => {
+  const store = new ConversationContextStore({
+    maxConversations: 10,
+    maxMessages: 3,
+    ttlMs: 1000
+  });
+  const bobMessage = {
+    text: "cześć",
+    kind: "direct-message",
+    actor: "Bob",
+    recipient: "Alice"
+  };
+  const bobTurn = store.beginTurn(bobMessage);
+  store.remember(bobTurn, bobMessage, {
+    translations: ["hello"],
+    language: "pl",
+    confidence: 0.9
+  });
+
+  const aliceReply = {
+    text: "sekretna odpowiedź",
+    kind: "reply",
+    actor: "Alice",
+    recipient: null
+  };
+  const inFlightTurn = store.beginTurn(aliceReply);
+
+  const malloryMessage = {
+    text: "hola",
+    kind: "direct-message",
+    actor: "Mallory",
+    recipient: "Alice"
+  };
+  const malloryTurn = store.beginTurn(malloryMessage);
+  store.remember(inFlightTurn, aliceReply, {
+    translations: ["secret reply"],
+    language: "pl",
+    confidence: 0.9
+  });
+
+  assert.equal(malloryTurn.context.length, 0);
+  assert.equal(store.beginTurn(malloryMessage).context.length, 0);
+  assert.equal(store.beginTurn(bobMessage).context.at(-1).original, "sekretna odpowiedź");
+});
+
+test("reserves later replies in a batch before any entry can await", () => {
+  const store = new ConversationContextStore({
+    maxConversations: 10,
+    maxMessages: 3,
+    ttlMs: 1000
+  });
+  const bobMessage = {
+    text: "cześć",
+    kind: "direct-message",
+    actor: "Bob",
+    recipient: "Alice"
+  };
+  const bobTurn = store.beginTurn(bobMessage);
+  store.remember(bobTurn, bobMessage, {
+    translations: ["hello"],
+    language: "pl",
+    confidence: 0.9
+  });
+
+  const aliceReply = {
+    text: "późniejsza odpowiedź",
+    kind: "reply",
+    actor: "Alice",
+    recipient: null
+  };
+  const turns = store.beginTurns([
+    { text: "waves", kind: "action", actor: "Alice", recipient: null },
+    aliceReply
+  ]);
+  store.beginTurn({
+    text: "hola",
+    kind: "direct-message",
+    actor: "Mallory",
+    recipient: "Alice"
+  });
+
+  assert.equal(turns[0], null);
+  assert.equal(store.contextForTurn(turns[1]).at(-1).original, "cześć");
+  store.remember(turns[1], aliceReply, {
+    translations: ["later reply"],
+    language: "pl",
+    confidence: 0.9
+  });
+  assert.equal(store.beginTurn(bobMessage).context.at(-1).original, "późniejsza odpowiedź");
 });

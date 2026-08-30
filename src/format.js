@@ -12,6 +12,17 @@ function escapeBackticks(value) {
   return neutralizeDiscordMentions(value).replace(/`/g, "'");
 }
 
+function escapeHeading(value, maxLength = 80) {
+  return neutralizeDiscordMentions(String(value || ""))
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maxLength)
+    .replace(/https?:\/\//giu, (match) => match.replace("://", ":\u200b//"))
+    .replace(/\bwww\./giu, (match) => `${match.slice(0, -1)}\u200b.`)
+    .replace(/[\\`*_~|>\[\]()]/gu, (character) => `\\${character}`);
+}
+
 function codeBlock(value) {
   return `\`\`\`text\n${String(value).replace(/```/g, "'''")}\n\`\`\``;
 }
@@ -43,7 +54,10 @@ function formatTranslation(result, options = {}) {
   const maxTranslationsPerMessage = options.maxTranslationsPerMessage || 1;
   const flag = result.flagged ? ":triangular_flag_on_post: " : "";
   const note = formatNote(result.note);
-  const heading = [result.languageLabel, providerLabel(result.provider)].filter(Boolean).join(" • ");
+  const heading = [result.languageLabel, providerLabel(result.provider)]
+    .map((item) => escapeHeading(item))
+    .filter(Boolean)
+    .join(" • ");
   const original = escapeBackticks(truncate(result.original, maxOriginalLength));
   const translations = result.translations
     .slice(0, maxTranslationsPerMessage)
@@ -64,6 +78,7 @@ function formatTranslation(result, options = {}) {
 
 module.exports = {
   escapeBackticks,
+  escapeHeading,
   formatNote,
   formatTranslation,
   providerLabel,
