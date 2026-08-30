@@ -277,6 +277,23 @@ function extractMessageActor(parts, budget) {
   return null;
 }
 
+function extractUniqueMessageActor(parts, budget) {
+  const actors = new Map();
+
+  for (const part of parts) {
+    const raw = String(part || "");
+    inspectPart(budget, raw);
+    for (const actor of extractMessageActorsFromRaw(raw)) {
+      const key = String(actor).toLowerCase();
+      if (!actors.has(key)) {
+        actors.set(key, actor);
+      }
+    }
+  }
+
+  return actors.size === 1 ? actors.values().next().value : null;
+}
+
 function cleanExtractedText(value) {
   const cleaned = String(value || "")
     .replace(/\r\n|\r/g, "\n")
@@ -334,8 +351,14 @@ function extractFencedEntriesFromSourceGroups(sourceGroups, budget, kind) {
   for (const parts of sourceGroups) {
     const rawParts = parts.map((part) => String(part || ""));
     const partActors = rawParts.map((raw) => extractMetadataActor(raw, kind));
-    const actors = [...new Set(partActors.filter(Boolean))];
-    const fallbackActor = actors.length === 1 ? actors[0] : null;
+    const actors = new Map();
+    for (const actor of partActors.filter(Boolean)) {
+      const key = String(actor).toLowerCase();
+      if (!actors.has(key)) {
+        actors.set(key, actor);
+      }
+    }
+    const fallbackActor = actors.size === 1 ? actors.values().next().value : null;
 
     for (const [partIndex, raw] of rawParts.entries()) {
       inspectPart(budget, raw);
@@ -347,8 +370,9 @@ function extractFencedEntriesFromSourceGroups(sourceGroups, budget, kind) {
       for (const block of fencedBlocks) {
         const text = cleanSignText(block);
         const actor = partActors[partIndex] || fallbackActor;
-        const key = `${String(actor || "").toLowerCase()}\u001f${textKey(text)}`;
-        if (!text || !key || seen.has(key)) {
+        const normalizedText = textKey(text);
+        const key = `${String(actor || "").toLowerCase()}\u001f${normalizedText}`;
+        if (!text || !normalizedText || seen.has(key)) {
           continue;
         }
 
@@ -462,13 +486,13 @@ function extractTranslatableEntries(message, budget) {
   if (Array.isArray(message.embeds)) {
     for (const embed of message.embeds) {
       const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
-      const embedActor = extractMessageActor(
+      const embedActor = extractUniqueMessageActor(
         collectEmbedMetadataText(data, budget),
         budget
       );
 
       if (data.description) {
-        const actor = extractMessageActor([data.description], budget) || embedActor;
+        const actor = extractUniqueMessageActor([data.description], budget) || embedActor;
         entries.push(
           ...extractTranslatableEntriesFromParts([data.description], { actor, budget })
         );
@@ -480,7 +504,8 @@ function extractTranslatableEntries(message, budget) {
             continue;
           }
 
-          const actor = extractMessageActor([field.name, field.value], budget) || embedActor;
+          const actor =
+            extractUniqueMessageActor([field.name, field.value], budget) || embedActor;
           entries.push(
             ...extractTranslatableEntriesFromParts([field.value], { actor, budget })
           );

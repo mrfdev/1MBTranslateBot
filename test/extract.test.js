@@ -141,6 +141,44 @@ test("does not leak a detected chat actor into a separate actorless part", () =>
   ]);
 });
 
+test("does not leak the first embed actor into an actorless field", () => {
+  const message = {
+    content: "",
+    embeds: [
+      {
+        description:
+          "Message by `RegularOne`\n`/msg FriendOne hola`\n" +
+          "Message by `OtherPlayer`\n`/msg FriendTwo bonjour`",
+        fields: [{ name: "Unattributed record", value: "`/msg FriendThree guten tag`" }]
+      }
+    ]
+  };
+
+  assert.deepEqual(extractTranslatableEntries(message), [
+    {
+      text: "hola",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendOne",
+      actor: "RegularOne"
+    },
+    {
+      text: "bonjour",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendTwo",
+      actor: "OtherPlayer"
+    },
+    {
+      text: "guten tag",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendThree",
+      actor: null
+    }
+  ]);
+});
+
 test("does not let player text spoof a structured message actor", () => {
   const message = {
     content: "",
@@ -282,11 +320,11 @@ test("uses null actors when sign and book metadata is unknown", () => {
 
 test("does not let fenced sign or book content spoof actor metadata", () => {
   assert.equal(
-    extractSignEntriesFromParts(["```\nPlaced by `JahLion`\nbonjour\n```"])[0].actor,
+    extractSignEntriesFromParts(["```\nPlaced by `SpoofedActor`\nbonjour\n```"])[0].actor,
     null
   );
   assert.equal(
-    extractBookEntriesFromParts(["```\n`JahLion` edited a book\nhola\n```"])[0].actor,
+    extractBookEntriesFromParts(["```\n`SpoofedActor` edited a book\nhola\n```"])[0].actor,
     null
   );
 
