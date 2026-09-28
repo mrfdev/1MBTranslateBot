@@ -141,6 +141,30 @@ test("does not leak a detected chat actor into a separate actorless part", () =>
   ]);
 });
 
+test("keeps actor headers visible after an orphan closing fence", () => {
+  const parts = [
+    "Message by `RegularOne`\n/cmi msg FriendOne hola```\n" +
+      "Message by `OtherPlayer`\n`/cmi msg FriendTwo bonjour`"
+  ];
+
+  assert.deepEqual(extractTranslatableEntriesFromParts(parts), [
+    {
+      text: "hola",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendOne",
+      actor: "RegularOne"
+    },
+    {
+      text: "bonjour",
+      kind: "direct-message",
+      command: "msg",
+      recipient: "FriendTwo",
+      actor: "OtherPlayer"
+    }
+  ]);
+});
+
 test("does not leak the first embed actor into an actorless field", () => {
   const message = {
     content: "",

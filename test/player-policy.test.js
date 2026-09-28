@@ -8,7 +8,10 @@ const {
   processEntryWithPlayerPolicy
 } = require("../src/player-policy");
 const { ConversationContextStore } = require("../src/context");
-const { extractTranslatableEntriesFromParts } = require("../src/extract");
+const {
+  extractTranslatableEntries,
+  extractTranslatableEntriesFromParts
+} = require("../src/extract");
 
 test("normalizes and deduplicates exact player names", () => {
   assert.equal(normalizePlayerName("  RegularOne  "), "regularone");
@@ -167,4 +170,43 @@ test("applies sender policy per entry in mixed chat-log batches", async () => {
 
   assert.deepEqual(reviewed, ["hola"]);
   assert.deepEqual(translatedActors, ["OtherPlayer", null]);
+});
+
+test("ignored usernames ending in underscores bypass translation from Discord embeds", async () => {
+  const entries = extractTranslatableEntries({
+    content: "",
+    embeds: [
+      {
+        author: { name: "**MSG SPY**" },
+        description:
+          "Message by `Regular_`, Location: `/tppos 1 2 3 world`\n" +
+          "```\n/cmi msg Friend_ ik heb twee shards```",
+        fields: []
+      }
+    ]
+  });
+  const ignoredPlayerNames = createPlayerNameSet(["Regular_"]);
+  let translateCalls = 0;
+  let reviewCalls = 0;
+  const translationService = {
+    riskOnlyResult() {
+      reviewCalls += 1;
+      return null;
+    },
+    async translate() {
+      translateCalls += 1;
+      return null;
+    }
+  };
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].actor, "Regular_");
+  assert.equal(entries[0].recipient, "Friend_");
+  await processEntryWithPlayerPolicy({
+    entry: entries[0],
+    ignoredPlayerNames,
+    translationService
+  });
+  assert.equal(translateCalls, 0);
+  assert.equal(reviewCalls, 1);
 });

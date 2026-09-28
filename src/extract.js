@@ -218,8 +218,8 @@ function extractTextFromCommand(line) {
 
 function cleanParticipant(value) {
   const cleaned = String(value || "")
-    .replace(/^[`*_~'\"]+/, "")
-    .replace(/[`*_~'\",.:;!?]+$/, "")
+    .replace(/^[`*~'\"]+/, "")
+    .replace(/[`*~'\",.:;!?]+$/, "")
     .trim();
 
   return cleaned || null;
@@ -235,9 +235,34 @@ function cleanPlayerActor(value) {
 }
 
 function maskFencedCode(raw) {
-  return String(raw || "").replace(/```[\s\S]*?(?:```|$)/gu, (block) =>
-    block.replace(/[^\r\n]/gu, " ")
-  );
+  const value = String(raw || "");
+  let masked = "";
+  let inFence = false;
+
+  for (let index = 0; index < value.length; ) {
+    if (value.startsWith("```", index)) {
+      const lineStart = value.lastIndexOf("\n", index - 1) + 1;
+      const nextLine = value.indexOf("\n", index + 3);
+      const lineEnd = nextLine < 0 ? value.length : nextLine;
+      const beforeFence = value.slice(lineStart, index);
+      const afterFence = value.slice(index + 3, lineEnd);
+      const orphanClosingFence =
+        !inFence && beforeFence.trim().length > 0 && afterFence.trim().length === 0;
+
+      masked += "   ";
+      if (!orphanClosingFence) {
+        inFence = !inFence;
+      }
+      index += 3;
+      continue;
+    }
+
+    const character = value[index];
+    masked += inFence && character !== "\r" && character !== "\n" ? " " : character;
+    index += 1;
+  }
+
+  return masked;
 }
 
 function extractMessageActorFromRaw(raw) {
