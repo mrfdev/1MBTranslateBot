@@ -1,6 +1,32 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { loadConfig, loadTranslationConfig } = require("../src/config");
+
+test("loads local environment silently and preserves existing process values", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "translationbot-env-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, ".env"), 'OLLAMA_MODE="shadow"\nOLLAMA_MODEL="qwen3:8b"\n');
+  const source = `
+    const assert = require("node:assert/strict");
+    const { loadTranslationConfig } = require(${JSON.stringify(require.resolve("../src/config"))});
+    const config = loadTranslationConfig();
+    assert.equal(config.translationMode, "active");
+    assert.equal(config.ollamaModel, "qwen3:8b");
+  `;
+  const result = spawnSync(process.execPath, ["-e", source], {
+    cwd: root,
+    env: { OLLAMA_MODE: "active" },
+    encoding: "utf8",
+    timeout: 10_000
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+});
 
 test("uses conservative local Ollama defaults", () => {
   const config = loadTranslationConfig({});

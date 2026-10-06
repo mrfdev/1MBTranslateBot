@@ -5,7 +5,7 @@ const {
 } = require("./ollama-translator");
 const { createPlayerNameSet } = require("./player-policy");
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function required(env, name) {
   const value = String(env[name] || "").trim();

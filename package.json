@@ -26,16 +26,16 @@
     "ollama:status": "node scripts/ollama-status.js",
     "evaluate": "node scripts/evaluate-translations.js",
     "evaluate:json": "node scripts/evaluate-translations.js --json",
-    "check:syntax": "node --check src/*.js && node --check scripts/*.js && node --check test/*.js && bash -n scripts/start-libretranslate.sh scripts/remote scripts/install scripts/start scripts/stop scripts/restart scripts/status scripts/health scripts/logs scripts/deploy",
+    "check:syntax": "node scripts/check-syntax.js",
     "lint": "npm run check:syntax",
     "build": "npm run check:syntax",
     "check": "npm run check:syntax && npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.12.0 || ^24.0.0 || ^26.0.0"
   },
   "dependencies": {
     "discord.js": "^14.27.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^18.0.5"
   }
 }

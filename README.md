@@ -61,14 +61,14 @@ The checked-in example uses `active`. Use `shadow` first if you want an observat
 
 Requirements:
 
-- Node.js 20 or newer
+- a current patch release of Node.js 22 (22.12 or newer), 24, or 26; Node.js 24 LTS is recommended for production, and Node.js 26 is also tested
 - a Discord bot with Message Content Intent and access to the configured channels
 - a separately managed Ollama service with `qwen3:8b` already installed
 
 Install the JavaScript dependencies and create the private environment file:
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
 ```
 
@@ -93,6 +93,8 @@ OLLAMA_MIN_CONFIDENCE=0.90
 See [.env.example](.env.example) for timeout, queue, cache, context, circuit-breaker, output, and legacy settings.
 
 The optional `npm run libretranslate` command only starts an already provisioned legacy environment. It never creates a virtual environment or installs packages. If legacy `off` or `shadow` mode is required, provision `.venv-libretranslate` separately from a reviewed, fully version- and hash-locked dependency set.
+
+Node.js and npm are the bot's only build tools. Java, Gradle, and Python are not required for the active Ollama backend. Ollama is a separately managed native service. Keep Node on a [supported release line](https://nodejs.org/en/about/previous-releases); Node.js 20 is no longer supported.
 
 ### Private transport when developing from another computer
 
@@ -142,7 +144,9 @@ npm run lint
 npm run build
 ```
 
-The project is plain CommonJS JavaScript, so `lint` and `build` perform syntax validation; there is no separate TypeScript compilation step.
+The project is plain CommonJS JavaScript, so `lint` and `build` perform syntax validation; there is no separate TypeScript compilation step. The checker validates every JavaScript file in `src`, `scripts`, and `test`, including nested directories, and every shell wrapper with its declared shell. The test suite also checks reconnect/resume health reporting and that malformed files cannot slip through the build check.
+
+After a macOS, Homebrew, or Node upgrade, run `npm ci`, `npm run check`, and `npm audit`. Check production with `./scripts/remote health`; a running launchd job alone does not establish Discord or translator readiness. Use a stable Node executable path in the private remote configuration so Homebrew cleanup cannot remove a versioned Cellar path used by the LaunchAgent. On the service host, run the synthetic live tests and evaluation below after an Ollama update. Restart updated services through their existing service managers, then check health again. A reused deployment of the same commit does not reinstall or recheck that release, so run the checks explicitly after changing its runtime.
 
 Run the optional live integration test only when a loopback Ollama endpoint is ready:
 

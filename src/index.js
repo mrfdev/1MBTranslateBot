@@ -547,6 +547,11 @@ client.on(Events.ShardReady, () => {
   publishHealthSnapshot();
 });
 
+client.on(Events.ShardResume, () => {
+  healthState.discord.gateway = "ready";
+  publishHealthSnapshot();
+});
+
 client.on(Events.Error, () => {
   healthState.discord.gateway_errors += 1;
   publishHealthSnapshot();
