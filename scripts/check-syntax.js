@@ -30,8 +30,10 @@ function validate(command, args, root, file) {
     encoding: "utf8",
     timeout: 30_000
   });
-  if (result.error || result.status !== 0) {
-    const detail = result.error?.message || result.stderr?.trim() ||
+  const diagnostics = result.stderr?.trim();
+  // macOS Bash 3.2 can report a parse error while returning exit status zero.
+  if (result.error || result.status !== 0 || diagnostics) {
+    const detail = result.error?.message || diagnostics ||
       `Checker exited with ${result.signal || result.status}.`;
     throw new Error(`Syntax check failed for ${file}:\n${detail}`);
   }

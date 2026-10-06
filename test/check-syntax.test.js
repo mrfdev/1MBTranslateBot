@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -60,4 +61,19 @@ test("rejects invalid nested Bash syntax", (t) => {
     "scripts/nested/z.sh": "#!/usr/bin/env bash\nvalues=(\n"
   });
   assert.throws(() => checkSyntax(root), /Syntax check failed for scripts\/nested\/z\.sh/u);
+});
+
+test("rejects parse diagnostics under the macOS system-shell path", { skip: process.platform !== "darwin" }, (t) => {
+  const root = syntaxFixture(t, {
+    "scripts/nested/z.sh": "#!/usr/bin/env bash\nvalues=(\n"
+  });
+  const source = `require(${JSON.stringify(require.resolve("../scripts/check-syntax"))}).checkSyntax(process.argv[1]);`;
+  const result = spawnSync(process.execPath, ["-e", source, root], {
+    env: { ...process.env, PATH: "/usr/bin:/bin" },
+    encoding: "utf8",
+    timeout: 10_000
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Syntax check failed for scripts\/nested\/z\.sh/u);
+  assert.match(result.stderr, /unexpected EOF/u);
 });
